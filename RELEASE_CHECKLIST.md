@@ -1,21 +1,34 @@
 # v0.1.0 release checklist
 
-## Completed before GitHub repository creation
+## Completed
+
 - [x] Standalone clean Git history created; private operational repository history not copied.
-- [x] MIT licence added.
+- [x] MIT licence added with Kelly McLellan as copyright holder.
+- [x] Git commit identity sanitized to the maintainer's GitHub noreply identity.
 - [x] Deployment-specific environment names/paths and write author removed from public defaults.
 - [x] Protocol tests pass under local Python 3.
-- [x] Legacy broker fixture suite passes against disposable Trac fixture.
-- [x] Known private host/domain/path/key marker scan passes.
-- [x] README, security policy, contribution/AI policy, changelog, provenance inventory and example configuration added.
-- [x] GitHub Actions protocol-test matrix prepared.
+- [x] Legacy broker fixture suite passes against a disposable Trac fixture.
+- [x] Known private host/domain/path/key/personal-email marker scan passes.
+- [x] Comprehensive human-readable and AI-compatible README added.
+- [x] Repository `AGENTS.md` added with development, documentation, privacy and security rules.
+- [x] Security policy, contribution/AI policy, changelog, provenance inventory and generic example configuration added.
+- [x] GitHub Actions package/protocol-test matrix prepared.
+- [x] Private GitHub repository created and clean history pushed.
+- [x] Fresh SSH clone validated after history sanitization.
+- [x] ChatGPT GitHub connector granted repository access.
 
-## Requires repository owner / GitHub repository
-- [ ] Create empty public GitHub repository (do not initialise it with README/LICENSE/gitignore).
-- [ ] Provide the repository `owner/name` or SSH URL so this prepared clean history can be pushed.
-- [ ] Enable Issues and private vulnerability reporting if available.
-- [ ] Confirm GitHub detects the MIT licence.
-- [ ] Review/default-branch protection settings after first push.
-- [ ] Run GitHub Actions and resolve any platform/version failures.
-- [ ] Validate a fresh clone and disposable Trac workflow from the public repository.
-- [ ] Tag/publish v0.1.0 only after those checks pass.
+## Before making the repository public
+
+- [ ] Confirm GitHub Actions succeeds on the current release candidate.
+- [ ] Validate the documented clean-install/package workflow independently of the working checkout.
+- [ ] Re-run full reachable-history privacy/provenance scan after final documentation changes.
+- [ ] Confirm repository settings are appropriate: Issues as desired, private vulnerability reporting if available, and default-branch protection/rules reviewed.
+- [ ] Confirm GitHub recognizes the MIT licence.
+- [ ] Change package version from `0.1.0.dev0` to `0.1.0` only when the release candidate is accepted.
+
+## After making the repository public
+
+- [ ] Verify public anonymous clone/read access and repeat privacy/content spot checks from the public view.
+- [ ] Confirm public README rendering, licence detection, and Actions status.
+- [ ] Tag `v0.1.0` only after the public checks pass.
+- [ ] Publish GitHub Release `v0.1.0` with release notes/changelog summary.
