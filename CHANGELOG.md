@@ -1,5 +1,14 @@
 # Changelog
 
-## Unreleased
-- Extract constrained Trac MCP adapter and legacy broker into a standalone MIT-licensed project.
-- Replace deployment-specific environment names, paths and write author with explicit configuration.
+## 0.1.0 - 2026-09-16
+
+Initial public-release candidate:
+
+- constrained Python 3 MCP adapter for explicitly allowlisted Trac environments;
+- legacy Python 2 compatibility broker for older Trac installations;
+- guarded/idempotent ticket, wiki, attachment and project-metadata operations;
+- generic configuration and systemd examples;
+- protocol and disposable legacy-broker fixture tests;
+- GitHub Actions validation on Python 3.10 through 3.13;
+- detailed human/AI-compatible installation and operations documentation;
+- security, contribution, provenance and coding-agent policies.

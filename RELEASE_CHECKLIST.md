@@ -19,12 +19,12 @@
 
 ## Before making the repository public
 
-- [ ] Confirm GitHub Actions succeeds on the current release candidate.
-- [ ] Validate the documented clean-install/package workflow independently of the working checkout.
+- [x] Confirm GitHub Actions succeeds on the current release candidate (Python 3.10-3.13 matrix).
+- [x] Validate clean package installation/startup through GitHub Actions on supported Python versions; local host Python 3.9 is deliberately below the supported minimum.
 - [ ] Re-run full reachable-history privacy/provenance scan after final documentation changes.
 - [ ] Confirm repository settings are appropriate: Issues as desired, private vulnerability reporting if available, and default-branch protection/rules reviewed.
-- [ ] Confirm GitHub recognizes the MIT licence.
-- [ ] Change package version from `0.1.0.dev0` to `0.1.0` only when the release candidate is accepted.
+- [x] Confirm GitHub recognizes the MIT licence.
+- [x] Change package version from `0.1.0.dev0` to `0.1.0` after release-candidate CI acceptance.
 
 ## After making the repository public
 
