@@ -1,0 +1,18 @@
+[Unit]
+Description=Trac MCP compatibility broker
+After=local-fs.target
+
+[Service]
+Type=simple
+User=trac
+Group=trac
+EnvironmentFile=/etc/trac-mcp/broker.env
+ExecStart=/usr/bin/python2 /opt/trac-mcp/legacy/trac_broker_py2.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RuntimeDirectory=trac-mcp
+
+[Install]
+WantedBy=multi-user.target
