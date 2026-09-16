@@ -19,7 +19,8 @@ def main():
  w=WikiPage(e,page); w.text='alpha searchable'; w.save('Fixture','create')
  assert page in b.dispatch({'op':'wiki_list','environment':'fixture','prefix':page})['pages']
  assert b.dispatch({'op':'wiki_search','environment':'fixture','query':'searchable'})['results']
- payload=base64.b64encode('fixture bytes')
+ assert b.dispatch({'op':'wiki_history','environment':'fixture','page':page})['history']
+ payload=base64.b64encode(b'fixture bytes').decode('ascii')
  up={'op':'attachment_upload','environment':'fixture','realm':'wiki','resource':page,'filename':'a.txt','expected_revision':1,'content_base64':payload,'idempotency_key':'upload-'+suffix}
  assert not b.dispatch(up)['duplicate']; assert b.dispatch(up)['duplicate']
  got=b.dispatch({'op':'attachment_get','environment':'fixture','realm':'wiki','resource':page,'filename':'a.txt','max_bytes':100})

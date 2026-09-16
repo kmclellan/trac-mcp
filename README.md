@@ -6,9 +6,9 @@ This README is intended to be usable by both people and AI coding/operations age
 
 ## Status
 
-The project is preparing its first `v0.1.0` release. The Python 3 MCP adapter and protocol tests are validated on Python 3.10 through 3.13 in GitHub Actions. `legacy/trac_broker_py2.py` is a compatibility broker for older Trac installations that still run under Python 2.
+The project is preparing its first `v0.1.0` release. The Python 3 MCP adapter and protocol tests are validated on Python 3.10 through 3.13 in GitHub Actions. `legacy/trac_broker_py2.py` is the Trac compatibility broker; despite the historical filename, it now supports both Python 2 and Python 3 Trac runtimes.
 
-The compatibility broker has been integration-tested with **Trac 1.4.4 on Python 2.7.18**. Validation used both a disposable copy of a real upgraded Trac 1.4.4 environment for bounded write tests and read-only checks against the staged 1.4.4 test environment itself. Trac 1.6/Python 3 broker compatibility has not yet been claimed and requires separate validation.
+The compatibility broker has been integration-tested with **Trac 1.4.4 on Python 2.7.18** and **Trac 1.6 on Python 3.9.2**. The Trac 1.4.4 validation used a disposable copy for bounded writes plus read-only checks against the staged environment. The Trac 1.6 validation used a disposable copy of the upgraded staged environment for bounded writes and a full adapter-to-broker Unix-socket test. Direct API access to the staged Trac 1.6 environment was intentionally not forced because the test account does not have the write permission that Trac requires for its SQLite environment.
 
 ## What it does
 
@@ -47,16 +47,18 @@ The socket is a local trust boundary. Do not expose it directly to a network or 
 
 The adapter does **not** require direct access to the Trac environment directory.
 
-### Legacy compatibility broker
+### Compatibility broker
 
-The supplied legacy broker is intended for installations where Trac itself still runs under Python 2. It requires:
+The supplied broker runs inside the Python runtime used by the target Trac installation. It has been validated with Trac 1.4.4/Python 2.7.18 and Trac 1.6/Python 3.9.2. The historical filename `legacy/trac_broker_py2.py` is retained for compatibility, but the source is dual-runtime.
+
+It requires:
 
 - the Python interpreter used by the target Trac installation;
 - the Trac Python package importable by that interpreter;
 - filesystem/database permissions required by Trac for only the environments you explicitly configure;
 - permission to create and serve the configured Unix socket.
 
-Run the broker as a dedicated least-privilege account. Do not run it as root merely to bypass permissions.
+Run the broker as a dedicated least-privilege account. Do not run it as root merely to bypass permissions. For SQLite-backed environments, note that Trac itself requires the runtime account to have write access to the database file and its containing directory, even for operations that are logically read-only.
 
 ## Quick start for development
 
@@ -114,7 +116,7 @@ The adapter understands these environment variables:
 
 Start from `examples/trac-mcp.env.example`. Environment IDs should be stable public labels; they do not need to reveal filesystem paths or host information.
 
-### 3. Configure the legacy broker
+### 3. Configure the compatibility broker
 
 The broker's `TRAC_MCP_ENVIRONMENTS` has a different form because it maps public IDs to local Trac paths:
 
@@ -164,10 +166,10 @@ python tests/test_trac_mcp_protocol.py
 
 GitHub Actions also installs the package and checks the `trac-mcp` entry point on the supported Python matrix.
 
-The legacy fixture test is intentionally separate because it needs a disposable Trac environment compatible with the legacy broker:
+The broker fixture test is intentionally separate because it needs a disposable Trac environment that can be opened by the target Trac runtime. Run it with the same Python interpreter used by that Trac installation:
 
 ```sh
-python tests/trac_broker_fixture_test.py
+/path/to/trac-python tests/trac_broker_fixture_test.py /path/to/disposable/trac-environment
 ```
 
 **Never point a fixture or destructive validation workflow at a production Trac environment.** Automated protocol tests, disposable-fixture testing, and production verification are different levels of evidence and should be reported separately.
@@ -188,6 +190,27 @@ Separate read-only smoke tests were then run against the actual staged Trac 1.4.
 Testing identified compatibility differences from the older Trac API and the broker was adjusted accordingly, notably for wiki-save arguments and ticket change timestamps. These fixes are part of the `v0.1.0` release candidate.
 
 This evidence establishes compatibility with the tested **Trac 1.4.4/Python 2.7.18** combination. It should not be interpreted as a blanket compatibility claim for every Trac/Python/plugin/database combination. For a new deployment, use a disposable copy or test environment before production use.
+
+## Trac 1.6 compatibility validation
+
+Trac 1.6 compatibility was validated using **Python 3.9.2 with Trac 1.6** against a disposable copy of the upgraded staged environment. The copied environment retained the real upgraded database schema and content while allowing the unprivileged test account to meet Trac's SQLite write-permission requirement.
+
+Validation covered:
+
+- broker import and startup under Python 3;
+- environment allowlisting and ticket queries;
+- ticket metadata, creation, guarded updates, comments and idempotency;
+- wiki listing, search, reads, creation, updates and history;
+- project-item creation, reads, guarded updates and stale-snapshot rejection;
+- bounded attachment upload, listing and retrieval, including idempotency and size rejection;
+- the Python 3 adapter communicating with the broker over a real Unix-domain socket;
+- end-to-end MCP calls for environment listing, ticket query, wiki read/history, guarded wiki update and read-back.
+
+Testing found two Python 3/Trac 1.6 compatibility issues in the broker: Python-2-specific text/byte handling (including attachment streams and octal syntax), and an older five-field wiki-history assumption. The broker now handles Python 2 and Python 3 text/byte types and accepts both four- and five-field wiki-history rows. The same fixture suite was rerun successfully with Trac 1.4.4/Python 2.7.18 after these changes.
+
+Direct broker access to the staged Trac 1.6 environment itself was not forced because the test account intentionally lacks write access to its SQLite database directory and Trac refuses to open such an environment. This is a permissions boundary, not a broker API failure.
+
+This evidence establishes compatibility with the tested **Trac 1.6/Python 3.9.2** combination. It is not a blanket guarantee for all plugin, database or Python combinations.
 
 ## Verifying a deployment
 
@@ -281,7 +304,7 @@ AI agents working with this repository should follow the same instructions as hu
 
 ```text
 src/trac_mcp/                  Python 3 MCP adapter
-legacy/trac_broker_py2.py      legacy Trac/Python 2 compatibility broker
+legacy/trac_broker_py2.py      dual-runtime Trac compatibility broker (historical filename)
 tests/                         protocol and broker fixture tests
 examples/                      generic environment/systemd examples
 .github/workflows/             CI configuration
@@ -294,7 +317,7 @@ RELEASE_CHECKLIST.md           release-readiness record
 
 ## Known limitations
 
-- The compatibility broker has been integration-tested with Trac 1.4.4 on Python 2.7.18. Trac 1.6/Python 3 broker compatibility still needs explicit validation before being claimed.
+- The compatibility broker has been integration-tested with Trac 1.4.4 on Python 2.7.18 and Trac 1.6 on Python 3.9.2; other Trac/Python/plugin/database combinations still require their own validation.
 - Client/gateway authentication is outside this repository's scope.
 - The supplied systemd and environment files are examples and require local review.
 - Production deployment cannot be proven solely by CI; validate against an appropriate disposable Trac environment first.

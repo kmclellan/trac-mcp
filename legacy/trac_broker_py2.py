@@ -1,7 +1,19 @@
 #!/usr/bin/python2
 # -*- coding: utf-8 -*-
 from __future__ import print_function
-import base64, calendar, grp, json, os, re, socket, StringIO
+import base64, calendar, grp, json, os, re, socket
+try:
+ import StringIO
+ byte_stream=StringIO.StringIO
+except ImportError:
+ import io
+ byte_stream=io.BytesIO
+try:
+ text_type=unicode
+ binary_type=str
+except NameError:
+ text_type=str
+ binary_type=bytes
 from trac.env import Environment
 from trac.ticket.model import Ticket
 from trac.ticket.query import Query
@@ -17,8 +29,8 @@ def env(name):
  if name not in ENVS: raise ValueError('environment not allowed')
  return Environment(ENVS[name])
 def txt(v,n):
- if not isinstance(v,(str,unicode)): raise ValueError('text required')
- v=v.decode('utf-8') if isinstance(v,str) else v
+ if not isinstance(v,(text_type,binary_type)): raise ValueError('text required')
+ v=v.decode('utf-8') if isinstance(v,binary_type) and not isinstance(v,text_type) else v
  if len(v)>n: raise ValueError('text too long')
  return v
 def changed_time(t): return getattr(t,'time_changed',t['changetime'])
@@ -144,12 +156,12 @@ def dispatch(d):
   for existing in Attachment.select(e,realm,resource):
    if existing.filename==filename: raise ValueError('attachment already exists')
   raw=d.get('content_base64','')
-  if not isinstance(raw,(str,unicode)): raise ValueError('base64 content required')
+  if not isinstance(raw,(text_type,binary_type)): raise ValueError('base64 content required')
   try: data=base64.b64decode(raw)
   except Exception: raise ValueError('invalid base64 content')
   if len(data)>524288: raise ValueError('attachment too large')
   a=Attachment(e,realm,resource); a.author=os.environ.get('TRAC_MCP_AUTHOR','MCP'); a.description=txt(d.get('description','Uploaded through MCP'),1000)
-  a.insert(filename,StringIO.StringIO(data),len(data)); e.db_transaction('INSERT INTO system (name,value) VALUES (%s,%s)',(key,a.filename))
+  a.insert(filename,byte_stream(data),len(data)); e.db_transaction('INSERT INTO system (name,value) VALUES (%s,%s)',(key,a.filename))
   return {'realm':realm,'resource':resource,'filename':a.filename,'size':a.size,'duplicate':False}
  if op=='attachment_get':
   realm=txt(d['realm'],20); resource=txt(d['resource'],200); filename=txt(d['filename'],255)
@@ -165,7 +177,13 @@ def dispatch(d):
   return {'page':w.name,'version':w.version,'text':w.text,'author':w.author,'comment':w.comment}
  if op=='wiki_history':
   w=WikiPage(e,txt(d['page'],200)); out=[]
-  for version,t,author,comment,ipnr in w.get_history():
+  for row in w.get_history():
+   if len(row)==5:
+    version,t,author,comment,ipnr=row
+   elif len(row)==4:
+    version,t,author,comment=row
+   else:
+    raise ValueError('unsupported wiki history row')
    out.append({'version':version,'time':calendar.timegm(t.utctimetuple())*1000000+t.microsecond,'author':author,'comment':comment})
    if len(out)>=100: break
   return {'history':out}
@@ -178,14 +196,14 @@ def dispatch(d):
 def main():
  try: os.unlink(SOCKET)
  except OSError: pass
- s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.bind(SOCKET); os.chown(SOCKET,-1,grp.getgrnam('mcp-gateway').gr_gid); os.chmod(SOCKET,0660); s.listen(16)
+ s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.bind(SOCKET); os.chown(SOCKET,-1,grp.getgrnam('mcp-gateway').gr_gid); os.chmod(SOCKET,0o660); s.listen(16)
  while True:
   c,_=s.accept()
   try:
    raw=c.recv(MAX+1)
    if len(raw)>MAX: raise ValueError('request too large')
    r={'ok':True,'result':dispatch(json.loads(raw))}
-  except Exception as x: r={'ok':False,'error':unicode(x)}
+  except Exception as x: r={'ok':False,'error':text_type(x)}
   try: c.sendall((json.dumps(r,ensure_ascii=False)+'\n').encode('utf-8'))
   finally: c.close()
 if __name__=='__main__': main()
