@@ -244,6 +244,10 @@ Run the configured broker interpreter directly and test `import trac`. Older Tra
 
 Verify the broker service account and the target environment's intended ownership/permissions. Do not run the broker as root to make the error disappear.
 
+If the broker is managed by systemd with `ProtectSystem=strict` and explicit `ReadWritePaths=`, remember that the service's mount namespace and writable-path bindings are established when the service starts. If an allowlisted Trac environment directory is later replaced, restored, atomically swapped or recreated at the same path, an already-running broker can retain a stale binding. A typical symptom is that reads still work while SQLite writes report a read-only database even though host-side ownership and modes look correct. Restart the broker service after such an environment replacement so systemd rebuilds the namespace and bindings; then re-check access. Do not weaken the sandbox or broaden database permissions as a workaround.
+
+Also verify that the broker interpreter imports the same Trac runtime version that owns the target environment schema. A few API calls can appear to work across a Trac-library/schema mismatch while other operations fail. After upgrading Trac, run the broker with that target Trac runtime and repeat the broker fixture/integration validation before considering the deployment healthy.
+
 ### Python virtual environment cannot be created
 
 Install the appropriate OS package providing Python's `venv`/`ensurepip` support. This is a host prerequisite, not a reason to develop as root.
