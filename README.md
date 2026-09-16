@@ -141,6 +141,10 @@ Before enabling a service, verify manually that:
 
 Then use your operating system's normal systemd workflow to install, enable, start, and inspect the service. System-level installation generally requires administrator privileges; source development and Git operations do not.
 
+The broker imports one Trac runtime per process. During a rolling Trac upgrade, do not assume one broker can safely serve a mixed fleet where some environments still require an older Trac runtime and others have already moved to a newer one. Either keep MCP access paused until the exposed environments have moved together, explicitly validate the mixed state, or run separately isolated broker instances for different Trac runtimes.
+
+The effective Trac runtime is the combination of the Python executable and its import environment. A deployment may use a dedicated virtual environment, or an isolated package tree supplied through `PYTHONPATH` or an equivalent mechanism. Verify the exact service environment, not merely the interpreter pathname: the broker process itself should report/import the intended Trac version before production access is reopened.
+
 ### 5. Connect an MCP client or gateway
 
 Configure the MCP client to execute the installed `trac-mcp` command using stdio and supply the adapter environment variables. Exact configuration syntax varies between MCP clients, so this project does not provide a client-specific JSON fragment that might become stale.
@@ -264,6 +268,8 @@ python tests/test_trac_mcp_protocol.py
 ```
 
 Back up deployment configuration before changing it. Review `CHANGELOG.md` for configuration or compatibility changes. If the broker changes, validate it against a disposable Trac environment before replacing a production broker.
+
+After changing the Trac runtime or upgrading the environments, test more than read-only discovery. Before reopening normal access, exercise a bounded write/read-back path in an approved test or maintenance target, then verify wiki history and attachment handling as well as ticket operations. Finally run the normal MCP client/adapter -> Unix socket -> broker -> Trac path end to end; direct broker calls alone do not prove that the deployed integration is healthy.
 
 ## Uninstalling
 
