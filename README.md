@@ -275,7 +275,7 @@ RELEASE_CHECKLIST.md           release-readiness record
 
 ## Known limitations
 
-- The included compatibility broker targets legacy Trac/Python 2 deployments; modern broker compatibility needs explicit validation before being claimed.
+- The compatibility broker has been integration-tested with Trac 1.4.4 on Python 2.7.18. Trac 1.6/Python 3 broker compatibility still needs explicit validation before being claimed.
 - Client/gateway authentication is outside this repository's scope.
 - The supplied systemd and environment files are examples and require local review.
 - Production deployment cannot be proven solely by CI; validate against an appropriate disposable Trac environment first.

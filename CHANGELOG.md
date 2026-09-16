@@ -11,4 +11,5 @@ Initial public-release candidate:
 - protocol and disposable legacy-broker fixture tests;
 - GitHub Actions validation on Python 3.10 through 3.13;
 - detailed human/AI-compatible installation and operations documentation;
-- security, contribution, provenance and coding-agent policies.
+- security, contribution, provenance and coding-agent policies;
+- Trac 1.4.4/Python 2.7.18 integration validation, including compatibility fixes for wiki saves and ticket change timestamps.

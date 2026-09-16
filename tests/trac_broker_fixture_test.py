@@ -1,8 +1,8 @@
 #!/usr/bin/python2
 from __future__ import print_function
-import base64, os, sys, uuid
-ROOT=os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0,ROOT)
-import trac_broker as b
+import base64, imp, os, sys, uuid
+ROOT=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+b=imp.load_source('trac_broker',os.path.join(ROOT,'legacy','trac_broker_py2.py'))
 from trac.env import Environment
 from trac.wiki.model import WikiPage
 from trac.attachment import Attachment
@@ -16,7 +16,7 @@ def denied(fn, text):
 def main():
  path=sys.argv[1] if len(sys.argv)>1 else '/srv/trac/test'; b.ENVS['fixture']=path; e=Environment(path)
  suffix=uuid.uuid4().hex[:10]; page='McpFixture'+suffix
- w=WikiPage(e,page); w.text='alpha searchable'; w.save('Fixture','create','127.0.0.1')
+ w=WikiPage(e,page); w.text='alpha searchable'; w.save('Fixture','create')
  assert page in b.dispatch({'op':'wiki_list','environment':'fixture','prefix':page})['pages']
  assert b.dispatch({'op':'wiki_search','environment':'fixture','query':'searchable'})['results']
  payload=base64.b64encode('fixture bytes')

@@ -21,8 +21,9 @@ def txt(v,n):
  v=v.decode('utf-8') if isinstance(v,str) else v
  if len(v)>n: raise ValueError('text too long')
  return v
+def changed_time(t): return getattr(t,'time_changed',t['changetime'])
 def td(t):
- dt=t.time_changed; d={'id':t.id,'changed':calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond}
+ dt=changed_time(t); d={'id':t.id,'changed':calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond}
  for k in ('summary','description','status','type','priority','milestone','component','owner','reporter','keywords','resolution'): d[k]=t[k]
  return d
 def idem(e,key): return e.db_query('SELECT value FROM system WHERE name=%s',(key,))
@@ -88,7 +89,7 @@ def dispatch(d):
   tid=t.insert(); e.db_transaction('INSERT INTO system (name,value) VALUES (%s,%s)',(key,str(tid)))
   return {'ticket':td(Ticket(e,tid)),'duplicate':False}
  if op=='ticket_update':
-  t=Ticket(e,int(d['ticket_id'])); dt=t.time_changed; changed=calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond
+  t=Ticket(e,int(d['ticket_id'])); dt=changed_time(t); changed=calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond
   if changed!=int(d['expected_changed']): raise ValueError('stale ticket revision')
   allowed=('summary','description','status','type','priority','milestone','component','owner','keywords','cc','version','resolution')
   fields=d.get('fields',{})
@@ -96,15 +97,15 @@ def dispatch(d):
   for k,v in fields.items():
    if k not in allowed: raise ValueError('field not allowed')
    t[k]=txt(v,50000 if k=='description' else 1000)
-  t.save_changes(os.environ.get('TRAC_MCP_AUTHOR','MCP')),txt(d.get('comment','Updated through MCP'),5000)); return {'ticket':td(Ticket(e,t.id))}
+  t.save_changes(os.environ.get('TRAC_MCP_AUTHOR','MCP'),txt(d.get('comment','Updated through MCP'),5000)); return {'ticket':td(Ticket(e,t.id))}
  if op=='ticket_comment':
   key='mcp-comment:%s:%s'%(d['environment'],txt(d['idempotency_key'],128))
   old=idem(e,key)
   if old: return {'ticket':td(Ticket(e,int(d['ticket_id']))),'duplicate':True}
   t=Ticket(e,int(d['ticket_id']))
-  dt=t.time_changed; changed=calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond
+  dt=changed_time(t); changed=calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond
   if changed!=int(d['expected_changed']): raise ValueError('stale ticket revision')
-  t.save_changes(os.environ.get('TRAC_MCP_AUTHOR','MCP')),txt(d['comment'],5000))
+  t.save_changes(os.environ.get('TRAC_MCP_AUTHOR','MCP'),txt(d['comment'],5000))
   e.db_transaction('INSERT INTO system (name,value) VALUES (%s,%s)',(key,str(t.id)))
   return {'ticket':td(Ticket(e,t.id)),'duplicate':False}
  if op=='wiki_list':
@@ -134,7 +135,7 @@ def dispatch(d):
   if old: return {'realm':realm,'resource':resource,'filename':old[0][0],'duplicate':True}
   expected=int(d['expected_revision'])
   if realm=='ticket':
-   t=Ticket(e,int(resource)); dt=t.time_changed; current=calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond
+   t=Ticket(e,int(resource)); dt=changed_time(t); current=calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond
   else:
    w=WikiPage(e,resource)
    if not w.exists: raise ValueError('attachment target not found')
@@ -171,7 +172,7 @@ def dispatch(d):
  if op=='wiki_update':
   w=WikiPage(e,txt(d['page'],200)); current=w.version if w.exists else 0
   if current!=int(d['expected_version']): raise ValueError('stale wiki revision')
-  w.text=txt(d['text'],50000); w.save(os.environ.get('TRAC_MCP_AUTHOR','MCP'),txt(d.get('comment','Updated through MCP'),1000),'127.0.0.1')
+  w.text=txt(d['text'],50000); w.save(os.environ.get('TRAC_MCP_AUTHOR','MCP'),txt(d.get('comment','Updated through MCP'),1000))
   w=WikiPage(e,w.name); return {'page':w.name,'version':w.version,'text':w.text,'author':w.author,'comment':w.comment}
  raise ValueError('unknown operation')
 def main():
