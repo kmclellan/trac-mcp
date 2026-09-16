@@ -6,7 +6,9 @@ This README is intended to be usable by both people and AI coding/operations age
 
 ## Status
 
-The project is preparing its first `v0.1.0` release. The Python 3 MCP adapter and protocol tests are suitable for current Python 3 environments. `legacy/trac_broker_py2.py` is a compatibility broker for older Trac installations that still run under Python 2. Modern Trac/Python combinations have not yet been claimed as broker-compatible until independently validated.
+The project is preparing its first `v0.1.0` release. The Python 3 MCP adapter and protocol tests are validated on Python 3.10 through 3.13 in GitHub Actions. `legacy/trac_broker_py2.py` is a compatibility broker for older Trac installations that still run under Python 2.
+
+The compatibility broker has been integration-tested with **Trac 1.4.4 on Python 2.7.18**. Validation used both a disposable copy of a real upgraded Trac 1.4.4 environment for bounded write tests and read-only checks against the staged 1.4.4 test environment itself. Trac 1.6/Python 3 broker compatibility has not yet been claimed and requires separate validation.
 
 ## What it does
 
@@ -169,6 +171,23 @@ python tests/trac_broker_fixture_test.py
 ```
 
 **Never point a fixture or destructive validation workflow at a production Trac environment.** Automated protocol tests, disposable-fixture testing, and production verification are different levels of evidence and should be reported separately.
+
+## Trac 1.4.4 compatibility validation
+
+The Trac 1.4.4 compatibility claim is based on integration testing, not only unit/protocol tests. The broker was run using **Python 2.7.18 with Trac 1.4.4** against a disposable copy of an upgraded Trac environment. The fixture validation covered:
+
+- wiki creation, listing and search;
+- bounded attachment upload and retrieval, including maximum-size rejection;
+- idempotent attachment handling;
+- rejection of non-allowlisted environments;
+- project-item creation and idempotency;
+- guarded project-item updates and stale-revision rejection.
+
+Separate read-only smoke tests were then run against the actual staged Trac 1.4.4 environment. Environment allowlisting, `ticket_get`, `ticket_query`, and `wiki_list` passed. The staged environment was not modified by these tests.
+
+Testing identified compatibility differences from the older Trac API and the broker was adjusted accordingly, notably for wiki-save arguments and ticket change timestamps. These fixes are part of the `v0.1.0` release candidate.
+
+This evidence establishes compatibility with the tested **Trac 1.4.4/Python 2.7.18** combination. It should not be interpreted as a blanket compatibility claim for every Trac/Python/plugin/database combination. For a new deployment, use a disposable copy or test environment before production use.
 
 ## Verifying a deployment
 
