@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 - 2026-09-18
+
+- declare object-root `outputSchema` metadata for all 26 MCP-visible tools;
+- return matching MCP `structuredContent` while retaining JSON `TextContent` for backward compatibility;
+- validate successful broker results against each tool's declared output schema before returning them to clients;
+- add protocol tests for output-schema coverage, structured/text equivalence and malformed broker-output rejection;
+- validate read-only schemas against live Trac responses and write-result schemas against a disposable Trac 1.6 environment.
+
 ## 0.1.0 - 2026-09-18
 
 First public release.
