@@ -12,5 +12,8 @@ Initial public-release candidate:
 - GitHub Actions validation on Python 3.10 through 3.13;
 - detailed human/AI-compatible installation and operations documentation;
 - security, contribution, provenance and coding-agent policies;
+- local `trac-mcp-call` one-shot CLI that validates JSON requests against the
+  published MCP tool schemas and reuses the constrained broker transport for
+  local recovery/automation;
 - Trac 1.4.4/Python 2.7.18 integration validation, including compatibility fixes for wiki saves and ticket change timestamps;
 - Trac 1.6/Python 3.9.2 integration validation, including Python 3 text/byte compatibility, attachment byte streams, and four-field wiki-history support.

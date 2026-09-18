@@ -153,6 +153,52 @@ The MCP process should run as an unprivileged account that can connect to the br
 
 The adapter also publishes MCP server instructions identifying this interface as the preferred application-level route for routine Trac administration (tickets, wiki pages, attachments and project metadata). Those instructions distinguish application administration from host/infrastructure work such as Trac installation, upgrades, service configuration, backups, filesystem permissions and broker deployment/repair, and explicitly discourage direct database writes for routine administration. MCP clients and aggregators that expose server instructions can use this metadata when choosing between overlapping management tools.
 
+
+### Local one-shot CLI
+
+Installations that already expose the constrained broker socket can also use
+`trac-mcp-call` for one bounded operation without running an MCP client. The
+CLI reuses the same published tool schemas and the same broker transport as
+`trac-mcp`; it does not open Trac environments directly and does not add shell,
+SQL, filesystem, delete, or arbitrary-environment capabilities.
+
+A request is a JSON object containing an MCP tool name and its arguments:
+
+```json
+{
+  "tool": "trac_ticket_get",
+  "arguments": {
+    "environment": "example",
+    "ticket_id": 7
+  }
+}
+```
+
+Run it from a file:
+
+```sh
+trac-mcp-call request.json
+```
+
+or from standard input:
+
+```sh
+printf '%s\n' '{"tool":"trac_environments","arguments":{}}' | trac-mcp-call
+```
+
+The local process must have permission to connect to the configured broker
+socket and must use the same `TRAC_MCP_SOCKET` and `TRAC_MCP_ENVIRONMENTS`
+configuration as the adapter. Do not make the socket world-writable merely to
+use this helper. A deployment may grant a specific automation account access
+to the broker socket, but that is a local security decision and should be
+narrower than granting direct Trac filesystem/database access.
+
+`trac-mcp-call` validates the request against the same tool schema published by
+the MCP adapter before sending it to the broker. Guarded write operations still
+require the normal revision/snapshot and idempotency arguments. This makes the
+CLI suitable for local recovery/automation where an MCP client surface is
+temporarily unavailable while preserving the broker's security boundary.
+
 ## Configuration rules
 
 - Keep the adapter's public environment-ID allowlist and broker mapping synchronized.

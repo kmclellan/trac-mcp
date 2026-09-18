@@ -17,6 +17,7 @@ classifiers = [
 
 [project.scripts]
 trac-mcp = "trac_mcp.server:main"
+trac-mcp-call = "trac_mcp.call:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
