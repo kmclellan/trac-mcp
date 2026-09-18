@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 - 2026-09-18
+
+- normalize MCP `structuredContent` into a strict fixed-shape contract while preserving the original broker JSON in text content;
+- require every property of every output object and set `additionalProperties: false` recursively;
+- replace unconstrained output values with explicit nullable strings, nullable integers, or fixed `{field, value_json}` records;
+- fill sparse Trac result fields explicitly with `null`, `false`, or empty arrays in structured content;
+- add regression tests that scan all 26 output schemas for strict structured-output compatibility;
+- validate sparse production read results and representative write results against the strict schemas.
+
 ## 0.1.1 - 2026-09-18
 
 - declare object-root `outputSchema` metadata for all 26 MCP-visible tools;

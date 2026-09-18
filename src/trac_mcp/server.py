@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import json, os, socket, sys
 
-from .output_schemas import OUTPUT_SCHEMAS
+from .output_schemas import OUTPUT_SCHEMAS, normalize_output
 
 
 class SchemaValidationError(ValueError):
@@ -145,8 +145,9 @@ def broker(p):
  if not r.get('ok'): raise RuntimeError(r.get('error','Trac broker error'))
  return r['result']
 def result(name,x):
- _validate_tool_output(name,x)
- return {'content':[{'type':'text','text':json.dumps(x,ensure_ascii=False,indent=2)}],'structuredContent':x,'isError':False}
+ structured=normalize_output(name,x)
+ _validate_tool_output(name,structured)
+ return {'content':[{'type':'text','text':json.dumps(x,ensure_ascii=False,indent=2)}],'structuredContent':structured,'isError':False}
 def response(i,x): print(json.dumps({'jsonrpc':'2.0','id':i,'result':x},separators=(',',':')),flush=True)
 def handle(m):
  method=m.get('method'); i=m.get('id')

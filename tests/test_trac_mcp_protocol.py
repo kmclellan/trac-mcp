@@ -136,6 +136,33 @@ class TracMcpProtocolTests(unittest.TestCase):
         self.assertTrue(
             all(t["outputSchema"].get("type") == "object" for t in tool_items)
         )
+
+        def assert_strict_schema(schema, path="$"):
+            self.assertNotEqual(schema, {}, path)
+            if schema.get("type") == "object":
+                properties = schema.get("properties")
+                self.assertIsInstance(properties, dict, path)
+                self.assertFalse(schema.get("additionalProperties"), path)
+                self.assertEqual(
+                    set(schema.get("required", [])),
+                    set(properties),
+                    path,
+                )
+            for key, value in schema.items():
+                if isinstance(value, dict):
+                    assert_strict_schema(value, path + "." + key)
+                elif isinstance(value, list):
+                    for index, item in enumerate(value):
+                        if isinstance(item, dict):
+                            assert_strict_schema(
+                                item, "%s.%s[%d]" % (path, key, index)
+                            )
+
+        for item in tool_items:
+            assert_strict_schema(
+                item["outputSchema"], item["name"] + ".outputSchema"
+            )
+
         self.assertIn("trac_environments", tools)
         self.assertIn("trac_ticket_actions", tools)
         self.assertIn("trac_wiki_recent_changes", tools)
@@ -215,17 +242,25 @@ class TracMcpProtocolTests(unittest.TestCase):
                 "id": 14,
                 "method": "tools/call",
                 "params": {
-                    "name": "trac_ping",
-                    "arguments": {"environment": "example"},
+                    "name": "trac_project_item_get",
+                    "arguments": {
+                        "environment": "example",
+                        "kind": "component",
+                        "name": "Fixture",
+                    },
                 },
             },
-            {"environment": "example", "trac_version": "test"},
+            {
+                "kind": "not-a-project-kind",
+                "name": "Fixture",
+                "description": "",
+            },
         )
-        self.assertEqual(received[0]["op"], "ping")
+        self.assertEqual(received[0]["op"], "project_item_get")
         result = replies[0]["result"]
         self.assertTrue(result["isError"])
         self.assertNotIn("structuredContent", result)
-        self.assertIn("project_name", result["content"][0]["text"])
+        self.assertIn("not an allowed value", result["content"][0]["text"])
 
     def test_nullable_date_is_forwarded_unchanged(self):
         replies, received = exchange_with_fake_broker(
@@ -260,7 +295,71 @@ class TracMcpProtocolTests(unittest.TestCase):
         )
         self.assertEqual(received[0]["op"], "project_item_update")
         self.assertIsNone(received[0]["due"])
-        self.assertFalse(replies[0]["result"]["isError"])
+        result = replies[0]["result"]
+        self.assertFalse(result["isError"])
+        raw = json.loads(result["content"][0]["text"])
+        self.assertNotIn("owner", raw)
+        self.assertNotIn("time", raw)
+        self.assertEqual(
+            result["structuredContent"],
+            {
+                "kind": "milestone",
+                "name": "M1",
+                "description": "",
+                "owner": None,
+                "due": None,
+                "completed": None,
+                "time": None,
+            },
+        )
+
+    def test_dynamic_action_changes_are_normalized_for_structured_content(self):
+        broker_result = {
+            "ticket": {
+                "id": 1,
+                "changed": 123,
+                "summary": "T",
+                "description": "",
+                "status": "accepted",
+                "type": "defect",
+                "priority": "major",
+                "milestone": "",
+                "component": "",
+                "owner": "MCP",
+                "reporter": "MCP",
+                "keywords": "",
+                "resolution": "",
+            },
+            "duplicate": False,
+            "action": "accept",
+            "action_changes": {"status": "accepted", "owner": "MCP"},
+        }
+        replies, _ = exchange_with_fake_broker(
+            {
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "tools/call",
+                "params": {
+                    "name": "trac_ticket_update",
+                    "arguments": {
+                        "environment": "example",
+                        "ticket_id": 1,
+                        "expected_changed": 122,
+                    },
+                },
+            },
+            broker_result,
+        )
+        result = replies[0]["result"]
+        self.assertFalse(result["isError"])
+        self.assertEqual(json.loads(result["content"][0]["text"]), broker_result)
+        self.assertEqual(
+            result["structuredContent"]["action_changes"],
+            [
+                {"field": "owner", "value_json": '"MCP"'},
+                {"field": "status", "value_json": '"accepted"'},
+            ],
+        )
 
     def test_operation_override_argument_is_rejected_before_broker(self):
         replies = exchange([
