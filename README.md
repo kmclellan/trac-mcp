@@ -151,6 +151,8 @@ Configure the MCP client to execute the installed `trac-mcp` command using stdio
 
 The MCP process should run as an unprivileged account that can connect to the broker socket but does not need direct Trac filesystem access.
 
+The adapter also publishes MCP server instructions identifying this interface as the preferred application-level route for routine Trac administration (tickets, wiki pages, attachments and project metadata). Those instructions distinguish application administration from host/infrastructure work such as Trac installation, upgrades, service configuration, backups, filesystem permissions and broker deployment/repair, and explicitly discourage direct database writes for routine administration. MCP clients and aggregators that expose server instructions can use this metadata when choosing between overlapping management tools.
+
 ## Configuration rules
 
 - Keep the adapter's public environment-ID allowlist and broker mapping synchronized.

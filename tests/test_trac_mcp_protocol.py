@@ -39,6 +39,9 @@ class TracMcpProtocolTests(unittest.TestCase):
         ])
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         self.assertEqual(replies[0]["result"]["serverInfo"]["version"], "0.4.0")
+        instructions = replies[0]["result"]["instructions"]
+        self.assertIn("preferred application-level interface", instructions)
+        self.assertIn("Do not use direct database writes", instructions)
 
     def test_falls_back_for_unknown_protocol(self):
         replies = exchange([

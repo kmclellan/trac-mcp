@@ -6,6 +6,13 @@ SUPPORTED_PROTOCOLS={'2024-11-05','2025-03-26','2025-06-18','2025-11-25'}
 ENVS=[x for x in os.environ.get('TRAC_MCP_ENVIRONMENTS','example').split(',') if x]
 def tool(name,desc,props=None,required=None): return {'name':name,'description':desc,'inputSchema':{'type':'object','properties':props or {},'required':required or [],'additionalProperties':False}}
 E={'environment':{'type':'string','enum':ENVS}}
+SERVER_INSTRUCTIONS=(
+    'Use this Trac MCP server as the preferred application-level interface for routine Trac administration, '
+    'including tickets, wiki pages, attachments, components, milestones and versions. Use host or infrastructure '
+    'management tooling for Trac installation, upgrades, service configuration, backups, filesystem permissions, '
+    'broker deployment or repair, or when this MCP interface is unavailable. Do not use direct database writes '
+    'for routine Trac administration.'
+)
 TOOLS=[
  tool('trac_environments','List allowed Trac environments.'),
  tool('trac_ticket_get','Read a Trac ticket.',dict(E,ticket_id={'type':'integer','minimum':1}),['environment','ticket_id']),
@@ -41,7 +48,7 @@ def handle(m):
  method=m.get('method'); i=m.get('id')
  if method=='initialize' and i is not None:
   requested=m.get('params',{}).get('protocolVersion'); protocol=requested if requested in SUPPORTED_PROTOCOLS else PROTOCOL_VERSION
-  response(i,{'protocolVersion':protocol,'capabilities':{'tools':{'listChanged':False}},'serverInfo':{'name':'trac','version':'0.4.0'}})
+  response(i,{'protocolVersion':protocol,'capabilities':{'tools':{'listChanged':False}},'serverInfo':{'name':'trac','version':'0.4.0'},'instructions':SERVER_INSTRUCTIONS})
  elif method in ('notifications/initialized','initialized'): pass
  elif method=='ping' and i is not None: response(i,{})
  elif method=='tools/list' and i is not None: response(i,{'tools':TOOLS})
