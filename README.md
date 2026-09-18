@@ -14,7 +14,7 @@ The compatibility broker has been integration-tested with **Trac 1.4.4 on Python
 
 The MCP-facing Python 3 process communicates over a local Unix-domain socket with a broker that owns the actual Trac API access. This separates the modern MCP runtime from an older Trac runtime and avoids giving the MCP process direct filesystem access to Trac environments.
 
-The interface is deliberately bounded. Environment IDs are explicitly allowlisted; guarded writes use revision/snapshot checks; creation/comment/upload operations use idempotency keys; and attachment names and sizes are bounded. There is no generic SQL, shell, arbitrary filesystem path, arbitrary `trac-admin`, or delete interface.
+The interface is deliberately bounded. Environment IDs are explicitly allowlisted; guarded writes use revision/snapshot checks; creation/comment/upload operations use idempotency keys; and attachment names and sizes are bounded. Ticket status/resolution transitions must use configured Trac workflow actions rather than direct field edits. The **MCP-visible surface** has no destructive/delete tools. A separate trusted local `trac-mcp-call` tier provides explicitly guarded deletion/batch administration and local wiki-file helpers without adding generic SQL, shell, arbitrary Trac paths, or arbitrary `trac-admin` access.
 
 ## Architecture
 
@@ -34,7 +34,7 @@ Trac compatibility broker
 explicitly allowlisted Trac environment(s)
 ```
 
-The socket is a local trust boundary. Do not expose it directly to a network or to untrusted local users. Authentication and per-user authorization belong at the MCP client/gateway boundary.
+The socket is a local trust boundary. Do not expose it directly to a network or to untrusted local users. Normal MCP authentication/authorization belongs at the client/gateway boundary; the broker additionally enforces peer-UID authorization for its trusted local-admin operation set. The broker's `TRAC_MCP_AUTHOR` value is used for Trac history/workflow attribution only; workflow evaluation intentionally uses the broker's trusted authority rather than requiring that attribution name to hold matching Trac login permissions in every environment.
 
 ## Requirements
 
@@ -71,10 +71,10 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install .
-python tests/test_trac_mcp_protocol.py
+python -m unittest tests.test_trac_mcp_protocol tests.test_trac_mcp_call
 ```
 
-Expected result: the protocol test suite reports `OK`.
+Expected result: the adapter/protocol and local-CLI test suites report `OK`.
 
 To verify the installed console entry point can start:
 
@@ -112,7 +112,7 @@ The adapter understands these environment variables:
 | --- | --- | --- |
 | `TRAC_MCP_SOCKET` | Unix socket used to reach the broker | `/run/trac-mcp/trac.sock` |
 | `TRAC_MCP_ENVIRONMENTS` | Comma-separated public environment IDs exposed through MCP | `example,docs` |
-| `TRAC_MCP_AUTHOR` | Default Trac history author where applicable | `MCP` |
+| `TRAC_MCP_AUTHOR` | Trac history/workflow attribution identity (not an authorization principal) | `MCP` |
 
 Start from `examples/trac-mcp.env.example`. Environment IDs should be stable public labels; they do not need to reveal filesystem paths or host information.
 
@@ -126,6 +126,23 @@ TRAC_MCP_ENVIRONMENTS=example=/srv/trac/example,docs=/srv/trac/docs
 
 Only list environments that MCP is intended to reach. Use absolute paths. The public adapter should expose only the corresponding IDs (`example,docs`), not these paths.
 
+Broker-specific settings are:
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `TRAC_MCP_SOCKET` | Unix socket created by the broker | `/run/trac-mcp/trac.sock` |
+| `TRAC_MCP_SOCKET_GROUP` | Optional group name/numeric GID assigned to the socket | unchanged/inherited when empty |
+| `TRAC_MCP_ENVIRONMENTS` | Comma-separated `id=/absolute/path` allowlist | example placeholder |
+| `TRAC_MCP_AUTHOR` | Trac history/workflow attribution identity | `MCP` |
+| `TRAC_MCP_ADMIN_UIDS` | Comma-separated numeric OS UIDs allowed to invoke the trusted local-admin broker operations | empty (local-admin broker operations disabled) |
+
+If `TRAC_MCP_SOCKET_GROUP` is set, the broker OS account must be permitted to
+assign that group to the socket (normally by being a member of the group), and
+the adapter account must have the intended socket access. Do not make the
+socket world-writable to avoid configuring this relationship correctly.
+
+If the trusted local admin tier is required, set `TRAC_MCP_ADMIN_UIDS` in the **broker** environment to a comma-separated list of numeric OS UIDs. The default empty/unset value disables broker-side local admin operations. Obtain a service account's numeric UID using your operating system's normal account tools; do not put usernames into this numeric setting. The MCP adapter UID should normally remain absent from this allowlist.
+
 Start from `examples/trac-broker.env.example`.
 
 ### 4. Run the broker
@@ -137,7 +154,9 @@ Before enabling a service, verify manually that:
 1. the configured interpreter imports Trac;
 2. the service account can access each intended Trac environment and no unintended environment;
 3. the socket directory is writable by the broker and accessible by the adapter;
-4. the environment file is not writable by untrusted users.
+4. any configured `TRAC_MCP_SOCKET_GROUP` can actually be assigned by the broker account and grants only the intended local clients access;
+5. `TRAC_MCP_ADMIN_UIDS` contains only explicitly trusted local automation UIDs (and normally not the MCP adapter UID);
+6. the environment file is not writable by untrusted users.
 
 Then use your operating system's normal systemd workflow to install, enable, start, and inspect the service. System-level installation generally requires administrator privileges; source development and Git operations do not.
 
@@ -158,9 +177,21 @@ The adapter also publishes MCP server instructions identifying this interface as
 
 Installations that already expose the constrained broker socket can also use
 `trac-mcp-call` for one bounded operation without running an MCP client. The
-CLI reuses the same published tool schemas and the same broker transport as
-`trac-mcp`; it does not open Trac environments directly and does not add shell,
-SQL, filesystem, delete, or arbitrary-environment capabilities.
+CLI reuses the same broker transport and all MCP-visible schemas, and also has a
+separate local-only registry for trusted administrative operations that are
+intentionally not advertised over MCP.
+
+The local-only tier includes guarded destructive/batch operations and wiki
+file helpers. It still does not expose generic shell, SQL, arbitrary Trac
+environment paths, or arbitrary broker-side filesystem access. Local file
+helpers read/write files as the calling OS user before/after invoking bounded
+wiki broker operations.
+
+Batch ticket operations are deliberately **per-item, not transactional across
+the whole batch**. Up to 50 items are attempted independently and the response
+separates successful and failed items. Each mutation retains its own
+revision/idempotency checks. Callers that require all-or-nothing behavior
+should not use the batch helpers.
 
 A request is a JSON object containing an MCP tool name and its arguments:
 
@@ -193,11 +224,35 @@ use this helper. A deployment may grant a specific automation account access
 to the broker socket, but that is a local security decision and should be
 narrower than granting direct Trac filesystem/database access.
 
-`trac-mcp-call` validates the request against the same tool schema published by
-the MCP adapter before sending it to the broker. Guarded write operations still
-require the normal revision/snapshot and idempotency arguments. This makes the
-CLI suitable for local recovery/automation where an MCP client surface is
-temporarily unavailable while preserving the broker's security boundary.
+Broker-side destructive/batch/enum administration is additionally protected by
+Unix peer credentials. Configure `TRAC_MCP_ADMIN_UIDS` with the numeric UID(s)
+of trusted local automation accounts; if it is empty or unset, those broker
+operations fail closed. Do **not** add the MCP adapter account to this allowlist
+merely for convenience. Linux peer credentials are supported directly; on
+other Unix platforms the runtime must expose an equivalent peer-credential API
+or local-admin operations remain unavailable.
+
+`trac-mcp-call` validates every request against either the MCP-visible schema
+or the explicit local-only schema before dispatch. Guarded writes retain the
+normal revision/snapshot and idempotency requirements; destructive operations
+also require `confirm: "DELETE"`.
+
+Inspect the split explicitly:
+
+```sh
+trac-mcp-call --list-mcp-tools
+trac-mcp-call --list-local-tools
+trac-mcp-call --list-tools
+```
+
+The local wiki file helpers detect Markdown vs TracWiki, but Markdown is not
+silently converted on push. This is deliberate: automatic conversion can alter
+documentation semantics and is deferred until a separately reviewed converter
+and fidelity test suite are adopted.
+
+The capability/exposure mapping against the 43-tool reference project
+`nerpatech/trac-mcp-server` is documented in
+[`docs/NERPATECH_CAPABILITY_MATRIX.md`](docs/NERPATECH_CAPABILITY_MATRIX.md).
 
 ## Configuration rules
 
@@ -210,13 +265,14 @@ temporarily unavailable while preserving the broker's security boundary.
 
 ## Testing
 
-Run the Python 3 protocol suite from the repository root:
+Run the Python 3 adapter/CLI suites from the repository root:
 
 ```sh
-python tests/test_trac_mcp_protocol.py
+python -m unittest tests.test_trac_mcp_protocol tests.test_trac_mcp_call
 ```
 
-GitHub Actions also installs the package and checks the `trac-mcp` entry point on the supported Python matrix.
+GitHub Actions also installs the package and checks both `trac-mcp` and
+`trac-mcp-call` entry points on the supported Python matrix.
 
 The broker fixture test is intentionally separate because it needs a disposable Trac environment that can be opened by the target Trac runtime. Run it with the same Python interpreter used by that Trac installation:
 
@@ -228,14 +284,24 @@ The broker fixture test is intentionally separate because it needs a disposable 
 
 ## Trac 1.4.4 compatibility validation
 
-The Trac 1.4.4 compatibility claim is based on integration testing, not only unit/protocol tests. The broker was run using **Python 2.7.18 with Trac 1.4.4** against a disposable copy of an upgraded Trac environment. The fixture validation covered:
+The Trac 1.4.4 compatibility claim is based on integration testing, not only
+unit/protocol tests. The broker was run using **Python 2.7.18 with Trac 1.4.4**
+against disposable environments. The current expanded fixture covers:
 
-- wiki creation, listing and search;
-- bounded attachment upload and retrieval, including maximum-size rejection;
-- idempotent attachment handling;
-- rejection of non-allowlisted environments;
-- project-item creation and idempotency;
-- guarded project-item updates and stale-revision rejection.
+- workflow-aware ticket creation, including custom creation actions;
+- ticket workflow discovery and guarded action application, including dynamic
+  action inputs such as resolution;
+- ticket comments, guarded updates, direct deletion and batch
+  create/update/delete with idempotent replay;
+- wiki creation/list/search/history plus guarded deletion;
+- bounded attachment upload/retrieval/listing plus guarded deletion;
+- component/milestone/version creation/list/get/update/delete, including
+  milestone dates and stale-snapshot rejection;
+- enum listing plus guarded enum administration for mutable enum classes;
+- broker health/server time, ticket-field metadata and recent wiki changes;
+- denied-environment behavior;
+- Unix-socket request reconstruction across multiple stream chunks and
+  over-limit rejection.
 
 Separate read-only smoke tests were then run against the actual staged Trac 1.4.4 environment. Environment allowlisting, `ticket_get`, `ticket_query`, and `wiki_list` passed. The staged environment was not modified by these tests.
 
@@ -247,16 +313,18 @@ This evidence establishes compatibility with the tested **Trac 1.4.4/Python 2.7.
 
 Trac 1.6 compatibility was validated using **Python 3.9.2 with Trac 1.6** against a disposable copy of the upgraded staged environment. The copied environment retained the real upgraded database schema and content while allowing the unprivileged test account to meet Trac's SQLite write-permission requirement.
 
-Validation covered:
+Validation includes the same expanded disposable broker fixture described
+for Trac 1.4.4 above, run under **Trac 1.6 / Python 3**, plus:
 
-- broker import and startup under Python 3;
-- environment allowlisting and ticket queries;
-- ticket metadata, creation, guarded updates, comments and idempotency;
-- wiki listing, search, reads, creation, updates and history;
-- project-item creation, reads, guarded updates and stale-snapshot rejection;
-- bounded attachment upload, listing and retrieval, including idempotency and size rejection;
-- the Python 3 adapter communicating with the broker over a real Unix-domain socket;
-- end-to-end MCP calls for environment listing, ticket query, wiki read/history, guarded wiki update and read-back.
+- Python 3 adapter and local-CLI schema enforcement;
+- rejection of unadvertised local-only/destructive tools through MCP;
+- rejection of unknown/extra arguments, including attempts to override the
+  broker operation name;
+- explicit public environment allowlisting before the broker is contacted;
+- installed-package smoke tests and verification of the 26 MCP-visible /
+  12 local-only tool split;
+- local wiki-file format detection, atomic TracWiki pull/push behavior, and
+  symlink refusal.
 
 Testing found two Python 3/Trac 1.6 compatibility issues in the broker: Python-2-specific text/byte handling (including attachment streams and octal syntax), and an older five-field wiki-history assumption. The broker now handles Python 2 and Python 3 text/byte types and accepts both four- and five-field wiki-history rows. The same fixture suite was rerun successfully with Trac 1.4.4/Python 2.7.18 after these changes.
 
@@ -312,10 +380,12 @@ For a source deployment:
 git fetch --tags
 # Review the release notes before selecting a new release.
 python -m pip install .
-python tests/test_trac_mcp_protocol.py
+python -m unittest tests.test_trac_mcp_protocol tests.test_trac_mcp_call
 ```
 
 Back up deployment configuration before changing it. Review `CHANGELOG.md` for configuration or compatibility changes. If the broker changes, validate it against a disposable Trac environment before replacing a production broker.
+
+Run the adapter through the installed `trac-mcp` entry point. Do not copy `src/trac_mcp/server.py` out of the package as a standalone deployment file: the adapter intentionally shares validation code with the local CLI through the installed `trac_mcp` package. Older deployments that used a copied standalone adapter should migrate their service/gateway command to the installed entry point during upgrade, with a rollback copy of the previous command/configuration.
 
 After changing the Trac runtime or upgrading the environments, test more than read-only discovery. Before reopening normal access, exercise a bounded write/read-back path in an approved test or maintenance target, then verify wiki history and attachment handling as well as ticket operations. Finally run the normal MCP client/adapter -> Unix socket -> broker -> Trac path end to end; direct broker calls alone do not prove that the deployed integration is healthy.
 
@@ -331,7 +401,7 @@ For a system deployment, separately disable/remove any broker service and its co
 
 ## Security model and reporting
 
-The constrained interface is intentional. Requests to add generic shell, SQL, arbitrary filesystem access, unrestricted `trac-admin`, or destructive operations should receive explicit security review rather than being treated as ordinary convenience features.
+The constrained interface is intentional. The existing destructive operations are confined to the explicitly reviewed trusted-local `trac-mcp-call` tier. Requests to expose destructive/admin operations over MCP, or to add generic shell, SQL, arbitrary Trac/filesystem access or unrestricted `trac-admin`, require explicit security review rather than being treated as ordinary convenience features.
 
 See `SECURITY.md` for vulnerability reporting and `PROVENANCE.md` for the initial source/provenance audit.
 
@@ -361,9 +431,12 @@ AI agents working with this repository should follow the same instructions as hu
 ## Repository layout
 
 ```text
-src/trac_mcp/                  Python 3 MCP adapter
+src/trac_mcp/server.py         Python 3 MCP stdio adapter and MCP-visible registry
+src/trac_mcp/call.py           trusted local one-shot CLI and local-only registry
+src/trac_mcp/schema.py         shared bounded schema validator
 legacy/trac_broker_py2.py      dual-runtime Trac compatibility broker (historical filename)
-tests/                         protocol and broker fixture tests
+tests/                         protocol, CLI and cross-Trac broker fixture tests
+docs/                          capability mapping and design/reference documentation
 examples/                      generic environment/systemd examples
 .github/workflows/             CI configuration
 SECURITY.md                    vulnerability/security policy
