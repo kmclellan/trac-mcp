@@ -24,7 +24,7 @@ Preserve the deliberately constrained architecture. Do not add generic shell, SQ
 Run the relevant automated tests after changes. At minimum for adapter/protocol changes run:
 
 ```sh
-python tests/test_trac_mcp_protocol.py
+python -m unittest tests.test_trac_mcp_protocol tests.test_trac_mcp_call
 ```
 
 When package/entry-point behaviour changes, install/test the package in an isolated environment where practical. Legacy broker fixture testing must use a disposable Trac environment, never production. Report automated, fixture/integration, and production validation separately.
