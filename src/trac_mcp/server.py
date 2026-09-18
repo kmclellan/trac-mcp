@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json, os, socket, sys
 
+from .output_schemas import OUTPUT_SCHEMAS
+
 
 class SchemaValidationError(ValueError):
     """A value does not satisfy the supported schema subset."""
@@ -124,11 +126,15 @@ TOOLS=[
  tool('trac_wiki_get','Read a Trac wiki page.',dict(E,page={'type':'string','maxLength':200}),['environment','page']),
  tool('trac_wiki_history','Read wiki page history.',dict(E,page={'type':'string','maxLength':200}),['environment','page']),
  tool('trac_wiki_update','Revision-guarded wiki update.',dict(E,page={'type':'string','maxLength':200},expected_version={'type':'integer','minimum':0},text={'type':'string','maxLength':50000},comment={'type':'string','maxLength':1000}),['environment','page','expected_version','text'])]
+for item in TOOLS:
+ item['outputSchema']=OUTPUT_SCHEMAS[item['name']]
 TOOL_BY_NAME={item['name']:item for item in TOOLS}
 TOOL_NAMES=set(TOOL_BY_NAME)
 def _validate_tool_arguments(name,args):
  if not isinstance(args,dict): raise ValueError('arguments must be an object')
  validate_value(args,TOOL_BY_NAME[name]['inputSchema'],'arguments')
+def _validate_tool_output(name,value):
+ validate_value(value,TOOL_BY_NAME[name]['outputSchema'],'structuredContent')
 def broker(p):
  s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.settimeout(10); s.connect(SOCKET); s.sendall((json.dumps(p)+'\n').encode()); s.shutdown(socket.SHUT_WR); out=b''
  while True:
@@ -138,7 +144,9 @@ def broker(p):
  s.close(); r=json.loads(out.decode())
  if not r.get('ok'): raise RuntimeError(r.get('error','Trac broker error'))
  return r['result']
-def result(x): return {'content':[{'type':'text','text':json.dumps(x,ensure_ascii=False,indent=2)}],'isError':False}
+def result(name,x):
+ _validate_tool_output(name,x)
+ return {'content':[{'type':'text','text':json.dumps(x,ensure_ascii=False,indent=2)}],'structuredContent':x,'isError':False}
 def response(i,x): print(json.dumps({'jsonrpc':'2.0','id':i,'result':x},separators=(',',':')),flush=True)
 def handle(m):
  method=m.get('method'); i=m.get('id')
@@ -153,7 +161,7 @@ def handle(m):
   try:
    if name not in TOOL_NAMES: raise ValueError('tool not advertised by this MCP server')
    _validate_tool_arguments(name,a)
-   op=name[5:] if name.startswith('trac_') else name; payload=dict(a); payload['op']=op; response(i,result(broker(payload)))
+   op=name[5:] if name.startswith('trac_') else name; payload=dict(a); payload['op']=op; response(i,result(name,broker(payload)))
   except Exception as e: response(i,{'content':[{'type':'text','text':str(e)}],'isError':True})
 def main():
  for line in sys.stdin:

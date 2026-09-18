@@ -129,8 +129,13 @@ class TracMcpProtocolTests(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         ])
         self.assertEqual(len(replies), 2)
-        tools = {t["name"] for t in replies[1]["result"]["tools"]}
+        tool_items = replies[1]["result"]["tools"]
+        tools = {t["name"] for t in tool_items}
         self.assertEqual(len(tools), 26)
+        self.assertTrue(all("outputSchema" in t for t in tool_items))
+        self.assertTrue(
+            all(t["outputSchema"].get("type") == "object" for t in tool_items)
+        )
         self.assertIn("trac_environments", tools)
         self.assertIn("trac_ticket_actions", tools)
         self.assertIn("trac_wiki_recent_changes", tools)
@@ -187,7 +192,11 @@ class TracMcpProtocolTests(unittest.TestCase):
                     "arguments": {"environment": "example"},
                 },
             },
-            {"environment": "example", "trac_version": "test"},
+            {
+                "environment": "example",
+                "project_name": "Fixture",
+                "trac_version": "test",
+            },
         )
         self.assertEqual(
             received,
@@ -195,10 +204,28 @@ class TracMcpProtocolTests(unittest.TestCase):
         )
         result = replies[0]["result"]
         self.assertFalse(result["isError"])
-        self.assertEqual(
-            json.loads(result["content"][0]["text"])["trac_version"],
-            "test",
+        text_value = json.loads(result["content"][0]["text"])
+        self.assertEqual(text_value["trac_version"], "test")
+        self.assertEqual(result["structuredContent"], text_value)
+
+    def test_invalid_broker_output_is_rejected_against_output_schema(self):
+        replies, received = exchange_with_fake_broker(
+            {
+                "jsonrpc": "2.0",
+                "id": 14,
+                "method": "tools/call",
+                "params": {
+                    "name": "trac_ping",
+                    "arguments": {"environment": "example"},
+                },
+            },
+            {"environment": "example", "trac_version": "test"},
         )
+        self.assertEqual(received[0]["op"], "ping")
+        result = replies[0]["result"]
+        self.assertTrue(result["isError"])
+        self.assertNotIn("structuredContent", result)
+        self.assertIn("project_name", result["content"][0]["text"])
 
     def test_nullable_date_is_forwarded_unchanged(self):
         replies, received = exchange_with_fake_broker(
