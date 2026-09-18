@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m unittest tests.test_trac_mcp_protocol tests.test_trac_mcp_call
+      - run: PYTHONPATH=src python -m unittest tests.test_trac_mcp_protocol tests.test_trac_mcp_call
       - run: python -m pip install .
       - run: printf '' | trac-mcp
       - run: trac-mcp-call --list-tools | grep -qx trac_ticket_comment
