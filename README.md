@@ -16,6 +16,8 @@ The MCP-facing Python 3 process communicates over a local Unix-domain socket wit
 
 The interface is deliberately bounded. Environment IDs are explicitly allowlisted; guarded writes use revision/snapshot checks; creation/comment/upload operations use idempotency keys; and attachment names and sizes are bounded. Ticket status/resolution transitions must use configured Trac workflow actions rather than direct field edits. The **MCP-visible surface** has no destructive/delete tools. A separate trusted local `trac-mcp-call` tier provides explicitly guarded deletion/batch administration and local wiki-file helpers without adding generic SQL, shell, arbitrary Trac paths, or arbitrary `trac-admin` access.
 
+A possible future mechanism for administrators to **selectively promote trusted-local tools into MCP** is scoped in [`docs/MCP_TOOL_PROMOTION_PLAN.md`](docs/MCP_TOOL_PROMOTION_PLAN.md). It is not currently scheduled for implementation; the design is published for GitHub feedback and can be developed if there is sufficient user interest.
+
 ## Architecture
 
 ```text
