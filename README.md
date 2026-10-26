@@ -358,6 +358,12 @@ Check that `TRAC_MCP_SOCKET` is identical for adapter and broker, the broker is 
 
 Check both sides of the allowlist. The adapter needs the public ID and the broker needs a matching `id=/absolute/path` mapping. A failure for an unconfigured ID is expected security behaviour.
 
+### Broker reports `Too many open files`
+
+The compatibility broker opens a Trac environment per request. It must call `Environment.shutdown()` in a `finally` block so that logging handlers and database connections are closed, including when requests fail. An older broker without this cleanup can exhaust its per-process open-file limit after many requests.
+
+Check the running broker process open-descriptor count and service logs before changing file-descriptor limits. Update to the fixed broker and restart only the affected service; then issue repeated read-only requests and confirm the descriptor count does not grow. Merely raising the open-file limit masks the underlying leak.
+
 ### Broker cannot import Trac
 
 Run the configured broker interpreter directly and test `import trac`. Older Trac installations may use a dedicated Python environment. Use that environment rather than changing the server's global Python merely for this project.
