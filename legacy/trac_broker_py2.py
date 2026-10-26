@@ -124,6 +124,11 @@ def dispatch(d):
  op=d.get('op')
  if op=='environments': return {'environments':sorted(ENVS)}
  e=env(d.get('environment'))
+ try:
+  return dispatch_env(d,e,op)
+ finally:
+  e.shutdown()
+def dispatch_env(d,e,op):
  if op=='ping':
   return {'environment':d['environment'],'project_name':simple(e.project_name),
           'trac_version':trac_version}
