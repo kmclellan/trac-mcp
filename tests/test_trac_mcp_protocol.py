@@ -131,7 +131,7 @@ class TracMcpProtocolTests(unittest.TestCase):
         self.assertEqual(len(replies), 2)
         tool_items = replies[1]["result"]["tools"]
         tools = {t["name"] for t in tool_items}
-        self.assertEqual(len(tools), 26)
+        self.assertEqual(len(tools), 27)
         self.assertTrue(all("outputSchema" in t for t in tool_items))
         self.assertTrue(
             all(t["outputSchema"].get("type") == "object" for t in tool_items)
@@ -165,11 +165,27 @@ class TracMcpProtocolTests(unittest.TestCase):
 
         self.assertIn("trac_environments", tools)
         self.assertIn("trac_ticket_actions", tools)
+        self.assertIn("trac_ticket_relations", tools)
         self.assertIn("trac_wiki_recent_changes", tools)
         self.assertIn("trac_project_item_list", tools)
         self.assertIn("trac_enum_list", tools)
         self.assertNotIn("trac_ticket_delete", tools)
         self.assertNotIn("trac_wiki_delete", tools)
+
+    def test_childtickets_relations_tool_has_strict_validated_output(self):
+        message = {
+            "jsonrpc": "2.0", "id": 77, "method": "tools/call",
+            "params": {"name": "trac_ticket_relations",
+                       "arguments": {"environment": "example", "ticket_id": 26}},
+        }
+        replies, forwarded = exchange_with_fake_broker(
+            message, {"ticket_id": 26, "parent_value": "#12 #20",
+                      "parent_ids": [12, 20], "child_ids": [32]})
+        self.assertEqual(forwarded[0]["op"], "ticket_relations")
+        result = replies[0]["result"]
+        self.assertFalse(result["isError"])
+        self.assertEqual(result["structuredContent"]["parent_ids"], [12, 20])
+        self.assertEqual(result["structuredContent"]["child_ids"], [32])
 
     def test_unadvertised_local_tool_cannot_be_called_through_mcp(self):
         replies = exchange([

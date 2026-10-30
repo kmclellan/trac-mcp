@@ -14,8 +14,11 @@ try:
 except NameError:
  text_type=str
  binary_type=bytes
+try: integer_types=(int,long)
+except NameError: integer_types=(int,)
 from trac import __version__ as trac_version
 from trac.env import Environment
+from trac.resource import ResourceNotFound
 from trac.ticket.api import TicketSystem
 from trac.ticket.model import Ticket
 from trac.ticket.query import Query
@@ -78,6 +81,95 @@ def td(t):
  dt=changed_time(t); d={'id':t.id,'changed':calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond}
  for k in ('summary','description','status','type','priority','milestone','component','owner','reporter','keywords','resolution'): d[k]=t[k]
  return d
+def childticket_parent_ids(raw):
+ # ChildTickets stores whitespace-separated #IDs; 26.1 is a display alias.
+ if not raw: return []
+ ids=[]
+ for token in text_type(raw).split():
+  if re.match(r'^#[1-9][0-9]{0,18}$',token):
+   pid=int(token[1:])
+   if pid<=9223372036854775807: ids.append(pid)
+ return ids
+def childticket_parent_field(e):
+ return any(f['name']=='parent' and f.get('custom') and f.get('type')=='text'
+            for f in TicketSystem(e).get_ticket_fields())
+def childticket_graph(e):
+ return dict((int(child),childticket_parent_ids(value))
+             for child,value in e.db_query("SELECT ticket,value FROM ticket_custom WHERE name='parent'"))
+def require_closed_children_before_resolve(e,tid):
+ if not childticket_parent_field(e): return
+ for child,parents in childticket_graph(e).items():
+  if int(tid) in parents and Ticket(e,child)['status']!='closed':
+   raise ValueError('cannot resolve ticket while child ticket #%d remains open'%child)
+def normalize_childticket_parents(e,value,child_id=None,child_type=None):
+ if not childticket_parent_field(e): raise ValueError('parent field not configured')
+ if value is None or value=='': return ''
+ if isinstance(value,bool): raise ValueError('parent reference must be a ticket number')
+ if isinstance(value,integer_types): tokens=[text_type(value)]
+ elif isinstance(value,(list,tuple)):
+  if len(value)>16: raise ValueError('too many parents (maximum 16)')
+  tokens=list(value)
+ elif isinstance(value,(text_type,binary_type)): tokens=txt(value,500).split()
+ else: raise ValueError('parent value must be a ticket number or list')
+ if len(tokens)>16: raise ValueError('too many parents (maximum 16)')
+ ids=[]
+ for token in tokens:
+  if isinstance(token,bool): raise ValueError('parent reference must be a ticket number')
+  if isinstance(token,integer_types): token=text_type(token)
+  if not isinstance(token,(text_type,binary_type)):
+   raise ValueError('parent reference must be a ticket number')
+  token=txt(token,24)
+  if not re.match(r'^#?[1-9][0-9]{0,18}$',token):
+   raise ValueError('parent must be an existing ticket number or #ticket-id')
+  pid=int(token.lstrip('#'))
+  if pid>9223372036854775807: raise ValueError('parent ticket ID out of range')
+  if pid in ids: raise ValueError('duplicate parent ticket')
+  if child_id is not None and pid==int(child_id): raise ValueError('ticket cannot parent itself')
+  ids.append(pid)
+ # ChildTicketsPlugin validates parent creation eligibility, type restrictions,
+ # status, cycle and depth. Enforce these even though the broker does not run
+ # Trac's HTML form manipulation/validation pipeline.
+ graph=childticket_graph(e)
+ max_depth=e.config.getint('childtickets','recursion_warn',7)
+ for pid in ids:
+  try: parent=Ticket(e,pid)
+  except ResourceNotFound: raise ValueError('parent ticket does not exist')
+  if not parent.exists: raise ValueError('parent ticket does not exist')
+  if not e.config.getbool('childtickets','parent.%s.allow_child_tickets'%parent['type']):
+   raise ValueError('parent ticket type does not allow child tickets')
+  allowed=e.config.getlist('childtickets','parent.%s.restrict_child_type'%parent['type'],default=[])
+  if allowed and child_type not in allowed: raise ValueError('parent forbids this child ticket type')
+  if parent['status']=='closed': raise ValueError('parent ticket is closed')
+ # Model the POST-change graph, including the new ticket's own node on create.
+ # All paths are counted INCLUDING the child, unlike the old create path.
+ # Reparenting must also validate every affected DESCENDANT's total depth.
+ changed=int(child_id) if child_id is not None else 0
+ graph[changed]=ids
+ children={}
+ for child,parents in graph.items():
+  for pid in parents: children.setdefault(pid,[]).append(child)
+ descendants=set()
+ pending=[changed]
+ while pending:
+  node=pending.pop()
+  if node in descendants: continue
+  descendants.add(node)
+  pending.extend(children.get(node,()))
+ depths={}
+ def depth(node,active):
+  if node in active: raise ValueError('parent relationship would create a cycle')
+  if node in depths: return depths[node]
+  if len(active)>=max_depth: raise ValueError('parent relationship exceeds configured depth')
+  chain=active+(node,)
+  longest=1
+  for pid in graph.get(node,()):
+   longest=max(longest,1+depth(pid,chain))
+  if len(active)+longest>max_depth:
+   raise ValueError('parent relationship exceeds configured depth')
+  depths[node]=longest
+  return longest
+ for node in descendants: depth(node,())
+ return ' '.join('#%d'%pid for pid in ids)
 def idem(e,key): return e.db_query('SELECT value FROM system WHERE name=%s',(key,))
 def as_us(value):
  if not value: return None
@@ -177,6 +269,14 @@ def dispatch_env(d,e,op):
   items=[enum_data(kind,x) for x in cls.select(e)]
   return {'kind':kind,'items':items}
  if op=='ticket_get': return td(Ticket(e,int(d['ticket_id'])))
+ if op=='ticket_relations':
+  if not childticket_parent_field(e): raise ValueError('parent field not configured')
+  tid=int(d['ticket_id']); t=Ticket(e,tid)
+  if not t.exists: raise ValueError('ticket does not exist')
+  graph=childticket_graph(e)
+  return {'ticket_id':tid,'parent_value':text_type(t['parent'] or ''),
+          'parent_ids':graph.get(tid,[]),
+          'child_ids':sorted(child for child,parents in graph.items() if tid in parents)}
  if op=='ticket_query':
   q=txt(d['query'],2000); q=q if 'max=' in q else q+'&max=50'
   return {'tickets':[td(Ticket(e,int(x['id']))) for x in Query.from_string(e,q).execute()[:100]]}
@@ -270,10 +370,11 @@ def dispatch_env(d,e,op):
   author=os.environ.get('TRAC_MCP_AUTHOR','MCP')
   t=Ticket(e); t['summary']=txt(d['summary'],500); t['description']=txt(d.get('description',''),50000)
   t['reporter']=author
-  allowed=('type','priority','milestone','component','owner','keywords','cc','version')
-  for k,v in d.get('fields',{}).items():
+  allowed=('type','priority','milestone','component','owner','keywords','cc','version','parent')
+  input_fields=dict(d.get('fields',{}) or {})
+  for k,v in input_fields.items():
    if k not in allowed: raise ValueError('field not allowed')
-   t[k]=txt(v,1000)
+   if k!='parent': t[k]=txt(v,1000)
   requested_action=d.get('action')
   args={}
   if requested_action is not None:
@@ -292,7 +393,11 @@ def dispatch_env(d,e,op):
    controllers.append(controller)
    changes=controller.get_ticket_changes(req,t,action) or {}
    for k,v in changes.items(): action_changes[k]=v
+  if 'parent' in action_changes: raise ValueError('workflow cannot modify parent')
   for k,v in action_changes.items(): t[k]=v
+  # Validate once against the final explicit + workflow-effective child type.
+  if 'parent' in input_fields:
+   t['parent']=normalize_childticket_parents(e,input_fields['parent'],child_type=t['type'])
   tid=t.insert()
   for controller in controllers: controller.apply_action_side_effects(req,t,action)
   e.db_transaction('INSERT INTO system (name,value) VALUES (%s,%s)',(key,str(tid)))
@@ -306,10 +411,10 @@ def dispatch_env(d,e,op):
   t=Ticket(e,int(d['ticket_id'])); dt=changed_time(t); changed=calendar.timegm(dt.utctimetuple())*1000000+dt.microsecond
   if changed!=int(d['expected_changed']): raise ValueError('stale ticket revision')
   direct_allowed=('summary','description','type','priority','milestone','component','owner','keywords','cc','version')
-  workflow_allowed=direct_allowed+('status','resolution')
+  workflow_allowed=direct_allowed+('status','resolution','parent')
   fields=dict(d.get('fields',{}) or {})
   for k in fields:
-   if k not in direct_allowed: raise ValueError('field not allowed; status/resolution require workflow action')
+   if k not in direct_allowed+('parent',): raise ValueError('field not allowed; status/resolution require workflow action')
   action=d.get('action'); controllers=[]; action_changes={}
   if action is not None:
    action=txt(action,100)
@@ -327,10 +432,20 @@ def dispatch_env(d,e,op):
     changes=controller.get_ticket_changes(req,t,action) or {}
     for k,v in changes.items(): action_changes[k]=v
    fields.update(action_changes)
+  if 'parent' in action_changes: raise ValueError('workflow cannot modify parent')
+  if action_changes.get('status')=='closed':
+   require_closed_children_before_resolve(e,t.id)
   if not fields and not d.get('comment'): raise ValueError('fields, action or comment required')
-  for k,v in fields.items():
+  for k in fields:
    if k not in workflow_allowed: raise ValueError('workflow changed unsupported field')
-   t[k]=txt(v,50000 if k=='description' else 1000)
+  final_type=fields.get('type',t['type'])
+  if 'parent' in fields:
+   fields['parent']=normalize_childticket_parents(e,fields['parent'],child_id=t.id,child_type=final_type)
+  elif final_type!=t['type'] and t['parent']:
+   # A type change must not silently invalidate ANY retained parent links.
+   normalize_childticket_parents(e,t['parent'],child_id=t.id,child_type=final_type)
+  for k,v in fields.items():
+   t[k]=v if k=='parent' else txt(v,50000 if k=='description' else 1000)
   t.save_changes(os.environ.get('TRAC_MCP_AUTHOR','MCP'),txt(d.get('comment','Updated through MCP'),5000))
   for controller in controllers:
    controller.apply_action_side_effects(req,t,action)

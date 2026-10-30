@@ -10,6 +10,59 @@ The current public release is `v0.1.2` (18 September 2026). The Python 3 MCP ada
 
 The compatibility broker has been integration-tested with **Trac 1.4.4 on Python 2.7.18** and **Trac 1.6 on Python 3.9.2**. The Trac 1.4.4 validation used a disposable copy for bounded writes plus read-only checks against the staged environment. The Trac 1.6 validation used a disposable copy of the upgraded staged environment for bounded writes and a full adapter-to-broker Unix-socket test. Direct API access to the staged Trac 1.6 environment was intentionally not forced because the test account does not have the write permission that Trac requires for its SQLite environment.
 
+## ChildTicketsPlugin support
+
+Where Trac has the ChildTickets custom `parent` text field configured, the normal
+`trac_ticket_create` and revision-guarded `trac_ticket_update` tools accept it
+in `fields`. A ticket number can be supplied as `26`, `"26"`, or
+`"#26"`; it is stored in the plugin's canonical `#26` format. Multiple
+parents supported by ChildTicketsPlugin can be supplied as a list such as
+`[26, "#27"]`, or a whitespace-separated string `"26 #27"`.
+The parent field is **replaced as a whole** on update; pass `""` to remove all
+parents. A revision token (`expected_changed`) is still required.
+
+`trac_ticket_relations` reports the stored parent string and direct parent and
+child native ticket IDs. IDs are scoped to the selected Trac environment;
+there is no cross-project linking. The broker checks referenced tickets exist,
+disallows duplicate, self-parent and cycle-forming changes, and rejects
+malformed references. It also enforces configured parent-type eligibility,
+child-type restrictions, closed-parent and maximum-depth rules, and prevents
+resolving a parent with an open child. Arbitrary custom fields remain denied. A disabled or
+missing `parent` custom field produces an explicit error.
+
+ChildTicketsPlugin also provides UI child-ticket trees, configurable creation
+eligibility by parent type, child type defaults/restrictions, inherited fields
+and hierarchical **display references**. The plugin's labels such as `26.1` are
+not stable native ticket IDs, so the MCP intentionally uses native IDs only.
+The MCP currently does **not** reproduce the UI's configurable child-creation
+defaults, inherit rules or display alias resolution; clients should pass any
+desired field values explicitly. Unlike the UI creation form, generic MCP
+creation does not automatically enforce all per-type presentation defaults.
+The release and live tool inventory must be reconciled before enabling the
+new relationship tool in production.
+
+### Parent validation release gate
+
+The pending ChildTickets MCP rollout validates the **final effective ticket
+type** after explicit fields and supported workflow changes, independent of
+JSON field order. On a type-changing update it rechecks every retained parent
+against its configured child-type policy. Explicitly clearing `parent` does not
+revalidate already removed links. Workflow-generated `parent` changes are
+rejected before ticket persistence or action side effects, both on creation and
+update.
+
+Parent hierarchy depth counts the child as well as its ancestors on **both**
+create and update. Reparenting rechecks the longest ancestor path of every
+existing descendant of the modified ticket, including multi-parent paths;
+this rejects a move that would make previously existing descendants overdeep.
+Normal create/reparent still require ticket IDs, not display aliases.
+
+The `.github/workflows/test.yml` broker-parent job runs these regressions on
+Trac 1.6 alongside the existing protocol workflow. Production activation is
+tracked independently by MCP Server ticket #28: do not load the new tool,
+replace the Trac broker or modify the protected gateway baseline without its
+reserved evidence-preserved rollout.
+
 ## What it does
 
 The MCP-facing Python 3 process communicates over a local Unix-domain socket with a broker that owns the actual Trac API access. This separates the modern MCP runtime from an older Trac runtime and avoids giving the MCP process direct filesystem access to Trac environments.

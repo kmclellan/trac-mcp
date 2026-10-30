@@ -104,6 +104,7 @@ TOOLS=[
  tool('trac_ping','Check broker/Trac connectivity and report the Trac version.',dict(E),['environment']),
  tool('trac_server_time','Read the Trac host UTC time for coordination.',dict(E),['environment']),
  tool('trac_ticket_get','Read a Trac ticket.',dict(E,ticket_id={'type':'integer','minimum':1}),['environment','ticket_id']),
+ tool('trac_ticket_relations','List ChildTickets parent and direct child IDs for a ticket.',dict(E,ticket_id={'type':'integer','minimum':1}),['environment','ticket_id']),
  tool('trac_ticket_query','Query tickets using Trac query syntax.',dict(E,query={'type':'string','maxLength':2000}),['environment','query']),
  tool('trac_ticket_timeline','Read chronological ticket comments and field changes.',dict(E,ticket_id={'type':'integer','minimum':1},limit={'type':'integer','minimum':1,'maximum':500}),['environment','ticket_id']),
  tool('trac_ticket_metadata','List valid ticket field values for an environment.',dict(E),['environment']),

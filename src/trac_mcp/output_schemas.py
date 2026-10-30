@@ -148,6 +148,9 @@ OUTPUT_SCHEMAS = {
         {"unix_timestamp": INTEGER, "iso_utc": STRING}
     ),
     "trac_ticket_get": TICKET,
+    "trac_ticket_relations": obj({"ticket_id": INTEGER, "parent_value": STRING,
+                                  "parent_ids": {"type": "array", "items": INTEGER},
+                                  "child_ids": {"type": "array", "items": INTEGER}}),
     "trac_ticket_query": obj(
         {"tickets": {"type": "array", "items": TICKET}}
     ),
@@ -385,6 +388,11 @@ def normalize_output(name: str, raw: dict[str, Any]) -> dict[str, Any]:
         }
     if name == "trac_ticket_get":
         return _ticket(raw)
+    if name == "trac_ticket_relations":
+        return {"ticket_id": int(raw["ticket_id"]),
+                "parent_value": _string(raw.get("parent_value")),
+                "parent_ids": [int(v) for v in raw.get("parent_ids", [])],
+                "child_ids": [int(v) for v in raw.get("child_ids", [])]}
     if name == "trac_ticket_query":
         return {"tickets": [_ticket(item) for item in raw.get("tickets", [])]}
     if name == "trac_ticket_timeline":
