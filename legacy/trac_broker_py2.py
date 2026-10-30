@@ -140,13 +140,35 @@ def normalize_childticket_parents(e,value,child_id=None,child_type=None):
   allowed=e.config.getlist('childtickets','parent.%s.restrict_child_type'%parent['type'],default=[])
   if allowed and child_type not in allowed: raise ValueError('parent forbids this child ticket type')
   if parent['status']=='closed': raise ValueError('parent ticket is closed')
-  pending=[(pid,(int(child_id),) if child_id is not None else ())]
-  while pending:
-   ancestor,path=pending.pop()
-   if ancestor in path: raise ValueError('parent relationship would create a cycle')
-   chain=path+(ancestor,)
-   if len(chain)>max_depth: raise ValueError('parent relationship exceeds configured depth')
-   for grandparent in graph.get(ancestor,()): pending.append((grandparent,chain))
+ # Model the POST-change graph, including the new ticket's own node on create.
+ # All paths are counted INCLUDING the child, unlike the old create path.
+ # Reparenting must also validate every affected DESCENDANT's total depth.
+ changed=int(child_id) if child_id is not None else 0
+ graph[changed]=ids
+ children={}
+ for child,parents in graph.items():
+  for pid in parents: children.setdefault(pid,[]).append(child)
+ descendants=set()
+ pending=[changed]
+ while pending:
+  node=pending.pop()
+  if node in descendants: continue
+  descendants.add(node)
+  pending.extend(children.get(node,()))
+ depths={}
+ def depth(node,active):
+  if node in active: raise ValueError('parent relationship would create a cycle')
+  if node in depths: return depths[node]
+  if len(active)>=max_depth: raise ValueError('parent relationship exceeds configured depth')
+  chain=active+(node,)
+  longest=1
+  for pid in graph.get(node,()):
+   longest=max(longest,1+depth(pid,chain))
+  if len(active)+longest>max_depth:
+   raise ValueError('parent relationship exceeds configured depth')
+  depths[node]=longest
+  return longest
+ for node in descendants: depth(node,())
  return ' '.join('#%d'%pid for pid in ids)
 def idem(e,key): return e.db_query('SELECT value FROM system WHERE name=%s',(key,))
 def as_us(value):
@@ -349,12 +371,10 @@ def dispatch_env(d,e,op):
   t=Ticket(e); t['summary']=txt(d['summary'],500); t['description']=txt(d.get('description',''),50000)
   t['reporter']=author
   allowed=('type','priority','milestone','component','owner','keywords','cc','version','parent')
-  for k,v in d.get('fields',{}).items():
+  input_fields=dict(d.get('fields',{}) or {})
+  for k,v in input_fields.items():
    if k not in allowed: raise ValueError('field not allowed')
-   if k=='parent':
-    t[k]=normalize_childticket_parents(e,v,child_type=t['type'])
-   else:
-    t[k]=txt(v,1000)
+   if k!='parent': t[k]=txt(v,1000)
   requested_action=d.get('action')
   args={}
   if requested_action is not None:
@@ -373,7 +393,11 @@ def dispatch_env(d,e,op):
    controllers.append(controller)
    changes=controller.get_ticket_changes(req,t,action) or {}
    for k,v in changes.items(): action_changes[k]=v
+  if 'parent' in action_changes: raise ValueError('workflow cannot modify parent')
   for k,v in action_changes.items(): t[k]=v
+  # Validate once against the final explicit + workflow-effective child type.
+  if 'parent' in input_fields:
+   t['parent']=normalize_childticket_parents(e,input_fields['parent'],child_type=t['type'])
   tid=t.insert()
   for controller in controllers: controller.apply_action_side_effects(req,t,action)
   e.db_transaction('INSERT INTO system (name,value) VALUES (%s,%s)',(key,str(tid)))
@@ -408,16 +432,20 @@ def dispatch_env(d,e,op):
     changes=controller.get_ticket_changes(req,t,action) or {}
     for k,v in changes.items(): action_changes[k]=v
    fields.update(action_changes)
+  if 'parent' in action_changes: raise ValueError('workflow cannot modify parent')
   if action_changes.get('status')=='closed':
    require_closed_children_before_resolve(e,t.id)
   if not fields and not d.get('comment'): raise ValueError('fields, action or comment required')
-  for k,v in fields.items():
+  for k in fields:
    if k not in workflow_allowed: raise ValueError('workflow changed unsupported field')
-   if k=='parent':
-    if k in action_changes: raise ValueError('workflow cannot modify parent')
-    t[k]=normalize_childticket_parents(e,v,child_id=t.id,child_type=fields.get('type',t['type']))
-   else:
-    t[k]=txt(v,50000 if k=='description' else 1000)
+  final_type=fields.get('type',t['type'])
+  if 'parent' in fields:
+   fields['parent']=normalize_childticket_parents(e,fields['parent'],child_id=t.id,child_type=final_type)
+  elif final_type!=t['type'] and t['parent']:
+   # A type change must not silently invalidate ANY retained parent links.
+   normalize_childticket_parents(e,t['parent'],child_id=t.id,child_type=final_type)
+  for k,v in fields.items():
+   t[k]=v if k=='parent' else txt(v,50000 if k=='description' else 1000)
   t.save_changes(os.environ.get('TRAC_MCP_AUTHOR','MCP'),txt(d.get('comment','Updated through MCP'),5000))
   for controller in controllers:
    controller.apply_action_side_effects(req,t,action)
