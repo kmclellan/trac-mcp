@@ -1,9 +1,12 @@
 """ChildTicketsPlugin normalization, hierarchy and guarded update regressions."""
 import importlib.util
 import unittest
+from contextlib import contextmanager
+from unittest.mock import patch
 from pathlib import Path
 
 from trac.test import EnvironmentStub
+from trac.ticket.api import TicketSystem as RealTicketSystem
 from trac.ticket.model import Ticket
 
 spec = importlib.util.spec_from_file_location(
@@ -54,6 +57,50 @@ class ParentRelationshipTests(unittest.TestCase):
             "environment": "fixture",
             "ticket_id": ticket_id,
         }, self.environment, "ticket_relations")
+
+    @contextmanager
+    def workflow(self, action, changes):
+        """Fake workflow controller to exercise effective type and side effects."""
+        class Controller:
+            side_effects = 0
+
+            def get_ticket_actions(self, req, ticket):
+                return [(1, action)]
+
+            def get_ticket_changes(self, req, ticket, selected):
+                return dict(changes)
+
+            def apply_action_side_effects(self, req, ticket, selected):
+                self.side_effects += 1
+
+        controller = Controller()
+
+        class System:
+            def __init__(self, environment):
+                self.environment = environment
+                self.action_controllers = [controller]
+
+            def get_ticket_fields(self):
+                return RealTicketSystem(self.environment).get_ticket_fields()
+
+            def get_available_actions(self, req, ticket):
+                return [action]
+
+        with patch.object(broker, "TicketSystem", System), patch.object(
+                broker, "workflow_request", return_value=(object(), "test")):
+            yield controller
+
+    def change_type(self, ticket_id, new_type, parent_marker=False,
+                    action=None):
+        fields = {"type": new_type}
+        if parent_marker:
+            fields["parent"] = ""
+        return broker.dispatch_env({
+            "op": "ticket_update", "environment": "fixture",
+            "ticket_id": ticket_id,
+            "expected_changed": broker.td(Ticket(self.environment, ticket_id))["changed"],
+            "fields": fields, "action": action,
+        }, self.environment, "ticket_update")
 
     def test_numeric_and_hash_creation_canonicalize_and_replay(self):
         for index, value in enumerate((self.parent_id, str(self.parent_id), "#%d" % self.parent_id)):
@@ -132,7 +179,7 @@ class ParentRelationshipTests(unittest.TestCase):
 
     def test_plugin_depth_limit_enforced(self):
         parent_id = self.parent_id
-        for level in range(7):
+        for level in range(6):
             parent_id = self.create(parent_id, "depth-%d" % level)["ticket"]["id"]
         with self.assertRaisesRegex(ValueError, "depth"):
             self.create(parent_id, "too-deep")
@@ -169,6 +216,162 @@ class ParentRelationshipTests(unittest.TestCase):
         self.assertEqual("#%d" % self.parent_id,
                          Ticket(self.environment, child)["parent"])
 
+
+    def test_creation_type_is_independent_of_input_field_order(self):
+        self.environment.config.set(
+            "childtickets", "parent.defect.restrict_child_type", "task")
+        allowed = (
+            {"parent": self.parent_id, "type": "task"},
+            {"type": "task", "parent": self.parent_id},
+        )
+        for index, fields in enumerate(allowed):
+            with self.subTest(fields=fields):
+                result = broker.dispatch_env({
+                    "op": "ticket_create", "environment": "fixture",
+                    "summary": "ordered child", "idempotency_key": "ordered-%d" % index,
+                    "fields": fields,
+                }, self.environment, "ticket_create")
+                child = Ticket(self.environment, result["ticket"]["id"])
+                self.assertEqual("task", child["type"])
+                self.assertEqual("#%d" % self.parent_id, child["parent"])
+        rejected = (
+            {"parent": self.parent_id, "type": "enhancement"},
+            {"type": "enhancement", "parent": self.parent_id},
+        )
+        for index, fields in enumerate(rejected):
+            with self.subTest(fields=fields):
+                with self.assertRaisesRegex(ValueError, "forbids this child"):
+                    broker.dispatch_env({
+                        "op": "ticket_create", "environment": "fixture",
+                        "summary": "forbidden child",
+                        "idempotency_key": "forbidden-ordered-%d" % index,
+                        "fields": fields,
+                    }, self.environment, "ticket_create")
+
+    def test_existing_parent_revalidated_on_direct_type_update(self):
+        self.environment.config.set(
+            "childtickets", "parent.defect.restrict_child_type", "task")
+        child = self.create(self.parent_id, "child-change-type",
+                            extra={"type": "task"})["ticket"]["id"]
+        with self.assertRaisesRegex(ValueError, "forbids this child"):
+            self.change_type(child, "enhancement")
+        self.assertEqual("task", Ticket(self.environment, child)["type"])
+        self.assertEqual("#%d" % self.parent_id, Ticket(self.environment, child)["parent"])
+
+    def test_parent_clear_allows_type_change_without_old_link_validation(self):
+        self.environment.config.set(
+            "childtickets", "parent.defect.restrict_child_type", "task")
+        child = self.create(self.parent_id, "child-clear-type",
+                            extra={"type": "task"})["ticket"]["id"]
+        self.change_type(child, "enhancement", parent_marker=True)
+        saved = Ticket(self.environment, child)
+        self.assertEqual("", saved["parent"])
+        self.assertEqual("enhancement", saved["type"])
+
+    def test_all_retained_parents_revalidated_on_type_change(self):
+        second = Ticket(self.environment, self.other_id)
+        second["type"] = "task"
+        second.save_changes(author="test")
+        self.environment.config.set(
+            "childtickets", "parent.task.allow_child_tickets", "true")
+        self.environment.config.set(
+            "childtickets", "parent.defect.restrict_child_type",
+            "task, enhancement")
+        self.environment.config.set(
+            "childtickets", "parent.task.restrict_child_type", "task")
+        child = self.create([self.parent_id, self.other_id], "retained-many",
+                            extra={"type": "task"})["ticket"]["id"]
+        with self.assertRaisesRegex(ValueError, "forbids this child"):
+            self.change_type(child, "enhancement")
+        self.assertEqual("task", Ticket(self.environment, child)["type"])
+        self.assertEqual([self.parent_id, self.other_id],
+                         self.relations(child)["parent_ids"])
+
+    def test_workflow_create_uses_final_type_for_validation(self):
+        self.environment.config.set(
+            "childtickets", "parent.defect.restrict_child_type", "task")
+        with self.workflow("create", {"type": "task"}) as controller:
+            result = broker.dispatch_env({
+                "op": "ticket_create", "environment": "fixture",
+                "summary": "workflow type", "idempotency_key": "workflow-final-create",
+                "fields": {"parent": self.parent_id, "type": "enhancement"},
+                "action": "create",
+            }, self.environment, "ticket_create")
+        self.assertEqual("task", Ticket(self.environment, result["ticket"]["id"])["type"])
+        self.assertEqual(1, controller.side_effects)
+
+    def test_workflow_create_rejects_parent_generation_before_insert(self):
+        before = self.environment.db_query("SELECT COUNT(*) FROM ticket")[0][0]
+        with self.workflow("create", {"parent": "#%d" % self.parent_id}) as controller:
+            with self.assertRaisesRegex(ValueError, "workflow cannot modify parent"):
+                broker.dispatch_env({
+                    "op": "ticket_create", "environment": "fixture",
+                    "summary": "should never exist",
+                    "idempotency_key": "reject-workflow-create-parent",
+                    "action": "create",
+                }, self.environment, "ticket_create")
+        self.assertEqual(before, self.environment.db_query("SELECT COUNT(*) FROM ticket")[0][0])
+        self.assertEqual(0, controller.side_effects)
+
+    def test_workflow_update_final_type_revalidated_atomically(self):
+        self.environment.config.set(
+            "childtickets", "parent.defect.restrict_child_type", "task")
+        child = self.create(self.parent_id, "workflow-child",
+                            extra={"type": "task"})["ticket"]["id"]
+        with self.workflow("change", {"type": "enhancement"}) as controller:
+            with self.assertRaisesRegex(ValueError, "forbids this child"):
+                self.change_type(child, "task", action="change")
+        self.assertEqual("task", Ticket(self.environment, child)["type"])
+        self.assertEqual(0, controller.side_effects)
+
+    def test_workflow_update_parent_generation_rejected_atomically(self):
+        child = self.create(self.parent_id, "workflow-parent-reject")["ticket"]["id"]
+        with self.workflow("change", {"parent": "#%d" % self.other_id}) as controller:
+            with self.assertRaisesRegex(ValueError, "workflow cannot modify parent"):
+                self.change_type(child, "task", action="change")
+        self.assertEqual("#%d" % self.parent_id, Ticket(self.environment, child)["parent"])
+        self.assertEqual(0, controller.side_effects)
+
+    def test_reparent_depth_includes_every_existing_descendant(self):
+        root = self.parent_id
+        for index in range(6):
+            root = self.create(root, "descendant-depth-%d" % index)["ticket"]["id"]
+        # Root A + six descendants is seven nodes. Adding root B above root A
+        # must reject, even though root A itself has a shallow new parent path.
+        with self.assertRaisesRegex(ValueError, "depth"):
+            self.update_parent(self.parent_id, self.other_id)
+        self.assertFalse(Ticket(self.environment, self.parent_id)["parent"])
+
+    def test_reparent_descendant_depth_just_within_limit(self):
+        root = self.parent_id
+        for index in range(5):
+            root = self.create(root, "allowed-depth-%d" % index)["ticket"]["id"]
+        self.update_parent(self.parent_id, self.other_id)
+        self.assertEqual("#%d" % self.other_id,
+                         Ticket(self.environment, self.parent_id)["parent"])
+        self.assertEqual(1, len(self.relations(root)["parent_ids"]))
+
+    def test_multiple_parent_depth_rejected_for_create_and_update(self):
+        deep = self.parent_id
+        for index in range(6):
+            deep = self.create(deep, "two-branch-depth-%d" % index)["ticket"]["id"]
+        with self.assertRaisesRegex(ValueError, "depth"):
+            self.create([self.other_id, deep], "multi-depth-invalid")
+        shallow = self.create(self.other_id, "shallow-for-reparent")["ticket"]["id"]
+        with self.assertRaisesRegex(ValueError, "depth"):
+            self.update_parent(shallow, [deep, self.other_id])
+        self.assertEqual([self.other_id], self.relations(shallow)["parent_ids"])
+
+    def test_workflow_update_allowed_final_type_override(self):
+        self.environment.config.set(
+            "childtickets", "parent.defect.restrict_child_type", "task")
+        child = self.create(self.parent_id, "allowed-workflow-child",
+                            extra={"type": "task"})["ticket"]["id"]
+        with self.workflow("change", {"type": "task"}) as controller:
+            self.change_type(child, "enhancement", action="change")
+        self.assertEqual("task", Ticket(self.environment, child)["type"])
+        self.assertEqual([self.parent_id], self.relations(child)["parent_ids"])
+        self.assertEqual(1, controller.side_effects)
 
 if __name__ == "__main__":
     unittest.main()
